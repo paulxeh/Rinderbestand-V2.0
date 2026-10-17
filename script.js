@@ -1563,7 +1563,7 @@ function PendingTagCallout({ calves, onOpenAnimal }) {
   );
 }
 
-function SectionTable({ title, color, animals, onOpenAnimal, showParents, showGender }) {
+function SectionTable({ title, color, animals, onOpenAnimal, showParents, showGender, showAbgangsDatum }) {
   const mobileScroll = useContext(MobileScrollContext);
   return (
     <section className="mb-6">
@@ -1581,6 +1581,7 @@ function SectionTable({ title, color, animals, onOpenAnimal, showParents, showGe
               <tr className="bg-white text-[#6B6858] text-[11px] uppercase tracking-wide">
                 <th className="text-left font-semibold px-3 py-2 rounded-tl-xl">Name</th>
                 <th className="text-left font-semibold px-3 py-2">Ohrmarke</th>
+                {showAbgangsDatum && <th className="text-left font-semibold px-3 py-2">Abgangsdatum</th>}
                 <th className="text-left font-semibold px-3 py-2">Geb.datum</th>
                 <th className="text-left font-semibold px-3 py-2">Alter</th>
                 {showGender && <th className="text-left font-semibold px-3 py-2">Geschlecht</th>}
@@ -1604,6 +1605,7 @@ function SectionTable({ title, color, animals, onOpenAnimal, showParents, showGe
                     {a.name || "Unbenannt"}
                   </td>
                   <td className="px-3 py-2 text-[#2B2A26]">{formatEarTag(a.earTag) || "ausstehend"}</td>
+                  {showAbgangsDatum && <td className="px-3 py-2 text-[#2B2A26]">{a.abgangsDatum ? formatDate(a.abgangsDatum) : "–"}</td>}
                   <td className="px-3 py-2 text-[#2B2A26]">{formatDate(a.birthDate)}</td>
                   <td className="px-3 py-2 text-[#2B2A26]">
                     {formatAgeShort(a.birthDate, a.category === "Abgänge" && a.abgangsDatum ? a.abgangsDatum : undefined)}
@@ -5252,12 +5254,14 @@ function RinderbestandApp() {
                       title="Verendet"
                       color={{ bg: "#BB201D", fg: "#FFFFFF" }}
                       animals={sorted.filter((a) => a.category === "Abgänge" && a.abgangsGrund === "verendet")}
+                      showAbgangsDatum
                       onOpenAnimal={(a) => setPassAnimal(a)}
                     />
                     <SectionTable
                       title="Verkauft"
                       color={{ bg: "#FBCD49", fg: "#2B2A26" }}
                       animals={sorted.filter((a) => a.category === "Abgänge" && a.abgangsGrund === "verkauft")}
+                      showAbgangsDatum
                       onOpenAnimal={(a) => setPassAnimal(a)}
                     />
                   </>
