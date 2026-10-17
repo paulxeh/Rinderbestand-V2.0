@@ -1,0 +1,21 @@
+# Veröffentlicht die aktuelle Version als echte App auf Firebase Hosting.
+# Startet NUR per Hand: GitHub -> Actions -> "Echte App veröffentlichen" -> "Run workflow".
+# Benötigt einmalig:
+#   - Secret   FIREBASE_SERVICE_ACCOUNT  (Inhalt der JSON-Schlüsseldatei)
+#   - Variable FIREBASE_PROJECT_ID       (z. B. rinderbestand-a1b2c)
+name: Echte App veröffentlichen
+
+on:
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: FirebaseExtended/action-hosting-deploy@v0
+        with:
+          repoToken: ${{ secrets.GITHUB_TOKEN }}
+          firebaseServiceAccount: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+          projectId: ${{ vars.FIREBASE_PROJECT_ID }}
+          channelId: live
