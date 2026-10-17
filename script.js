@@ -5222,6 +5222,9 @@ function RinderbestandApp() {
           <span>Bestandsbuch</span>
         </div>
         <h1 className="font-slab text-2xl font-bold text-[#2B2A26]">Rinderbestand</h1>
+        {!cloud.configured && (
+          <p className="text-[11px] text-[#8A8672] mt-0.5">Testversion · Daten nur auf diesem Gerät gespeichert</p>
+        )}
 
         <div className="grid grid-cols-5 gap-2 mt-4">
           <button
