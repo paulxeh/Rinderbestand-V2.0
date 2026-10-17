@@ -2,19 +2,24 @@
  * Wird von index.html über Babel (type="text/babel") geladen.
  */
 
-/* --- Speicher: window.storage -> localStorage --- */
-// Ersetzt die Claude-Artefakt-Speicherfunktion (window.storage) durch den
-// browsereigenen localStorage, damit die App auch außerhalb von Claude
-// dauerhaft speichert (z. B. als eigenständige HTML-Datei).
-window.storage = {
-  async get(key /*, shared */) {
+/* --- Speicher: Firebase (online, mit Anmeldung) oder localStorage (lokal) --- */
+// Die App spricht nur mit window.storage (get/set). Dahinter steckt:
+//  - Firebase Firestore, sobald in firebase-config.js echte Zugangsdaten stehen
+//    (Tiere je ein Dokument in "animals", Notizen/Ställe in "meta").
+//  - sonst wie bisher der localStorage des Browsers.
+// Geräte-Einstellungen (Handy-Ansicht, Admin/Besucher) bleiben immer lokal.
+const LOCAL_ONLY_KEYS = ["cattle:mobileScrollMode", "cattle:appMode"];
+const ANIMALS_KEY = "cattle:animals";
+
+const localBackend = {
+  async get(key) {
     const raw = localStorage.getItem(key);
     if (raw === null) {
       throw new Error("Key not found: " + key);
     }
     return { key, value: raw, shared: false };
   },
-  async set(key, value /*, shared */) {
+  async set(key, value) {
     try {
       localStorage.setItem(key, value);
       return { key, value, shared: false };
@@ -23,13 +28,173 @@ window.storage = {
       return null;
     }
   },
-  async delete(key /*, shared */) {
+  async delete(key) {
     localStorage.removeItem(key);
     return { key, deleted: true, shared: false };
   },
-  async list(prefix /*, shared */) {
+  async list(prefix) {
     const keys = Object.keys(localStorage).filter((k) => !prefix || k.startsWith(prefix));
     return { keys, prefix, shared: false };
+  },
+};
+
+const FB_CONFIG = window.FIREBASE_CONFIG || null;
+const CLOUD_CONFIGURED = !!(FB_CONFIG && FB_CONFIG.apiKey && !/^HIER/i.test(FB_CONFIG.apiKey));
+const cloud = {
+  configured: CLOUD_CONFIGURED,
+  available: CLOUD_CONFIGURED && !!window.firebase,
+  db: null,
+  user: null,
+  animals: new Map(), // id -> JSON-Text des Tieres (Stand, den die App zuletzt kennt)
+  meta: {}, // Schlüssel -> Text (Notizen, Ställe)
+  unsubscribe: null,
+};
+
+function metaDocId(key) {
+  return key.replace(/^cattle:/, "").replace(/[^a-zA-Z0-9_-]/g, "_");
+}
+
+function reportSaveError(e) {
+  console.error("Firebase-Speichern fehlgeschlagen", e);
+  window.dispatchEvent(new CustomEvent("rb-save-error", { detail: (e && e.message) || String(e) }));
+}
+
+if (cloud.available) {
+  firebase.initializeApp(FB_CONFIG);
+  cloud.db = firebase.firestore();
+  // Offline-Zwischenspeicher: Änderungen ohne Netz werden später automatisch hochgeladen
+  try {
+    cloud.db.enablePersistence({ synchronizeTabs: true }).catch(() => {});
+  } catch (e) {}
+}
+
+// Nach der Anmeldung: Daten laden und auf Änderungen anderer Geräte hören
+function cloudStart(user) {
+  cloud.user = user;
+  cloud.animals = new Map();
+  cloud.meta = {};
+  const db = cloud.db;
+  const metaPromise = db
+    .collection("meta")
+    .get()
+    .then((snap) => {
+      snap.forEach((d) => {
+        const v = d.data() && d.data().value;
+        if (typeof v === "string") cloud.meta["cattle:" + d.id] = v;
+      });
+    });
+  const animalsPromise = new Promise((resolve, reject) => {
+    let first = true;
+    cloud.unsubscribe = db.collection("animals").onSnapshot(
+      { includeMetadataChanges: false },
+      (snap) => {
+        const map = new Map();
+        snap.forEach((d) => {
+          const v = d.data() && d.data().data;
+          if (typeof v === "string") map.set(d.id, v);
+        });
+        if (first) {
+          first = false;
+          cloud.animals = map;
+          resolve();
+          return;
+        }
+        // Eigene, noch nicht bestätigte Änderungen ignorieren
+        if (snap.metadata && snap.metadata.hasPendingWrites) return;
+        let same = map.size === cloud.animals.size;
+        if (same) {
+          for (const [id, v] of map) {
+            if (cloud.animals.get(id) !== v) {
+              same = false;
+              break;
+            }
+          }
+        }
+        if (same) return;
+        cloud.animals = map;
+        const list = [...map.values()].map((v) => JSON.parse(v));
+        window.dispatchEvent(new CustomEvent("rb-remote-animals", { detail: list }));
+      },
+      (err) => {
+        if (first) reject(err);
+        else reportSaveError(err);
+      }
+    );
+  });
+  return Promise.all([metaPromise, animalsPromise]);
+}
+
+function cloudStop() {
+  if (cloud.unsubscribe) cloud.unsubscribe();
+  cloud.unsubscribe = null;
+  cloud.user = null;
+  cloud.animals = new Map();
+  cloud.meta = {};
+}
+
+// Nur geänderte/neue Tiere schreiben, entfernte löschen (max. 400 je Paket)
+function cloudSaveAnimals(list) {
+  const next = new Map();
+  list.forEach((a) => {
+    if (a && a.id) next.set(String(a.id), JSON.stringify(a));
+  });
+  const ops = [];
+  next.forEach((v, id) => {
+    if (cloud.animals.get(id) !== v) ops.push({ id, v });
+  });
+  cloud.animals.forEach((_, id) => {
+    if (!next.has(id)) ops.push({ id, del: true });
+  });
+  cloud.animals = next;
+  const col = cloud.db.collection("animals");
+  for (let i = 0; i < ops.length; i += 400) {
+    const batch = cloud.db.batch();
+    ops.slice(i, i + 400).forEach((op) => {
+      const ref = col.doc(op.id);
+      if (op.del) batch.delete(ref);
+      else batch.set(ref, { data: op.v, updatedAt: Date.now(), updatedBy: (cloud.user && cloud.user.email) || "" });
+    });
+    batch.commit().catch(reportSaveError);
+  }
+}
+
+window.storage = {
+  async get(key, shared) {
+    if (!cloud.user || LOCAL_ONLY_KEYS.includes(key)) return localBackend.get(key, shared);
+    if (key === ANIMALS_KEY) {
+      if (cloud.animals.size === 0) throw new Error("Key not found: " + key);
+      return { key, value: "[" + [...cloud.animals.values()].join(",") + "]", shared: false };
+    }
+    if (cloud.meta[key] === undefined) throw new Error("Key not found: " + key);
+    return { key, value: cloud.meta[key], shared: false };
+  },
+  async set(key, value, shared) {
+    if (!cloud.user || LOCAL_ONLY_KEYS.includes(key)) return localBackend.set(key, value, shared);
+    try {
+      if (key === ANIMALS_KEY) {
+        cloudSaveAnimals(JSON.parse(value));
+      } else {
+        cloud.meta[key] = value;
+        cloud.db
+          .collection("meta")
+          .doc(metaDocId(key))
+          .set({ value, updatedAt: Date.now(), updatedBy: (cloud.user && cloud.user.email) || "" })
+          .catch(reportSaveError);
+      }
+      return { key, value, shared: false };
+    } catch (e) {
+      reportSaveError(e);
+      return null;
+    }
+  },
+  async delete(key, shared) {
+    if (!cloud.user || LOCAL_ONLY_KEYS.includes(key)) return localBackend.delete(key, shared);
+    delete cloud.meta[key];
+    await cloud.db.collection("meta").doc(metaDocId(key)).delete();
+    return { key, deleted: true, shared: false };
+  },
+  async list(prefix, shared) {
+    return localBackend.list(prefix, shared);
   },
 };
 
@@ -2711,13 +2876,29 @@ function NotesBox() {
     }
   };
 
+  // Zusätzlich 1 Sekunde nach dem Tippen speichern (nicht nur beim Verlassen des Feldes),
+  // damit nichts verloren geht, wenn die App direkt geschlossen wird
+  const notesTimerRef = useRef(null);
+  const scheduleSave = (value) => {
+    clearTimeout(notesTimerRef.current);
+    notesTimerRef.current = setTimeout(() => saveNotes(value), 1000);
+  };
+
   return (
     <section className="mb-4 rounded-xl border border-[#D9CFB8] bg-white p-3">
       <label className="block font-slab text-sm font-bold text-[#2B2A26] mb-1">Mitteilungen</label>
       <textarea
         value={notes}
-        onChange={(e) => isAdmin && setNotes(e.target.value)}
-        onBlur={(e) => isAdmin && saveNotes(e.target.value)}
+        onChange={(e) => {
+          if (!isAdmin) return;
+          setNotes(e.target.value);
+          scheduleSave(e.target.value);
+        }}
+        onBlur={(e) => {
+          if (!isAdmin) return;
+          clearTimeout(notesTimerRef.current);
+          saveNotes(e.target.value);
+        }}
         readOnly={!isAdmin}
         placeholder="Notizen, Erinnerungen oder Mitteilungen für den Betrieb…"
         rows={3}
@@ -4655,6 +4836,24 @@ function RinderbestandApp() {
     };
   }, []);
 
+  // Änderungen von anderen Geräten (Firebase) übernehmen
+  useEffect(() => {
+    const onRemote = (e) => {
+      const list = e.detail || [];
+      animalsRef.current = list;
+      setAnimals(list);
+      const refresh = (prev) => (prev ? list.find((a) => a.id === prev.id) || prev : prev);
+      setPassAnimal(refresh);
+    };
+    const onSaveError = (e) => setSaveError(`Speichern fehlgeschlagen: ${e.detail}`);
+    window.addEventListener("rb-remote-animals", onRemote);
+    window.addEventListener("rb-save-error", onSaveError);
+    return () => {
+      window.removeEventListener("rb-remote-animals", onRemote);
+      window.removeEventListener("rb-save-error", onSaveError);
+    };
+  }, []);
+
   const persist = async (next) => {
     animalsRef.current = next;
     setAnimals(next);
@@ -5530,6 +5729,24 @@ function RinderbestandApp() {
               >
                 Daten exportieren
               </button>
+              {cloud.user && (
+                <div className="w-full px-4 py-3 rounded-lg border border-[#D9CFB8]">
+                  <span className="block text-xs text-[#8A8672] mb-2">
+                    Online gespeichert · angemeldet als {cloud.user.email}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setSettingsOpen(false);
+                      firebase.auth().signOut();
+                    }}
+                    className="w-full py-2 rounded-lg font-semibold"
+                    style={{ backgroundColor: "#2B2A26", color: "#FFFFFF" }}
+                  >
+                    Abmelden
+                  </button>
+                </div>
+              )}
               {appMode === "admin" && (
                 <button
                   type="button"
@@ -6025,9 +6242,158 @@ function RinderbestandApp() {
   );
 }
 
+// ===== Anmeldung (nur wenn Firebase eingerichtet ist) =====
+function LoginScreen({ error: initialError }) {
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [error, setError] = useState(initialError || "");
+  const [info, setInfo] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  const messageFor = (e) => {
+    const code = (e && e.code) || "";
+    if (code.includes("invalid-credential") || code.includes("wrong-password") || code.includes("user-not-found") || code.includes("invalid-login"))
+      return "E-Mail oder Passwort ist falsch.";
+    if (code.includes("invalid-email")) return "Bitte eine gültige E-Mail-Adresse eingeben.";
+    if (code.includes("too-many-requests")) return "Zu viele Versuche. Bitte kurz warten und erneut probieren.";
+    if (code.includes("network")) return "Keine Internetverbindung.";
+    return (e && e.message) || "Anmeldung fehlgeschlagen.";
+  };
+
+  const login = async () => {
+    setError("");
+    setInfo("");
+    setBusy(true);
+    try {
+      await firebase.auth().signInWithEmailAndPassword(email.trim(), password);
+    } catch (e) {
+      setError(messageFor(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const resetPassword = async () => {
+    setError("");
+    setInfo("");
+    if (!email.trim()) {
+      setError("Bitte zuerst die E-Mail-Adresse eingeben.");
+      return;
+    }
+    try {
+      await firebase.auth().sendPasswordResetEmail(email.trim());
+      setInfo("Falls das Konto existiert, wurde eine E-Mail zum Zurücksetzen gesendet.");
+    } catch (e) {
+      setError(messageFor(e));
+    }
+  };
+
+  return (
+    <div className="min-h-screen font-sans flex items-center justify-center px-5" style={{ backgroundColor: "#F9EFE4" }}>
+      <div className="w-full max-w-sm bg-white rounded-2xl border border-[#D9CFB8] p-6">
+        <div className="flex items-center gap-2 text-[#6B6858] text-xs uppercase tracking-[0.2em] mb-1">
+          <TagIcon size={14} />
+          <span>Bestandsbuch</span>
+        </div>
+        <h1 className="font-slab text-2xl font-bold text-[#2B2A26] mb-4">Rinderbestand</h1>
+        <form
+          onSubmit={(e) => {
+            e.preventDefault();
+            login();
+          }}
+        >
+          <label className="block text-xs font-semibold uppercase tracking-wide text-[#6B6858] mb-1">E-Mail</label>
+          <input
+            type="email"
+            autoComplete="username"
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+            className="w-full mb-3 px-3 py-2 rounded-lg border bg-white text-[#2B2A26] text-sm focus:outline-none"
+            style={{ borderColor: "#9CA3AF" }}
+          />
+          <label className="block text-xs font-semibold uppercase tracking-wide text-[#6B6858] mb-1">Passwort</label>
+          <input
+            type="password"
+            autoComplete="current-password"
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            className="w-full mb-3 px-3 py-2 rounded-lg border bg-white text-[#2B2A26] text-sm focus:outline-none"
+            style={{ borderColor: "#9CA3AF" }}
+          />
+          {error && <p className="text-[#BB201D] text-sm mb-3">{error}</p>}
+          {info && <p className="text-[#4C6B3F] text-sm mb-3">{info}</p>}
+          <button
+            type="submit"
+            disabled={busy || !email || !password}
+            className="w-full py-2.5 rounded-lg font-semibold disabled:opacity-40"
+            style={{ backgroundColor: "#2B2A26", color: "#FFFFFF" }}
+          >
+            {busy ? "Anmelden…" : "Anmelden"}
+          </button>
+        </form>
+        <button type="button" onClick={resetPassword} className="w-full mt-3 text-xs text-[#6B6858] underline">
+          Passwort vergessen?
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function AuthGate() {
+  // local = ohne Firebase, wie bisher; loading/login/ready = mit Firebase
+  const [state, setState] = useState(cloud.available ? "loading" : "local");
+  const [error, setError] = useState("");
+  const [uid, setUid] = useState(null);
+
+  useEffect(() => {
+    if (!cloud.available) return;
+    return firebase.auth().onAuthStateChanged(async (user) => {
+      if (!user) {
+        cloudStop();
+        setUid(null);
+        setState("login");
+        return;
+      }
+      setState("loading");
+      try {
+        await cloudStart(user);
+        setUid(user.uid);
+        setState("ready");
+      } catch (e) {
+        cloudStop();
+        const denied = String((e && e.code) || e).includes("permission");
+        setError(
+          denied
+            ? `Das Konto ${user.email} ist nicht für den Rinderbestand freigegeben.`
+            : `Daten konnten nicht geladen werden: ${(e && e.message) || e}`
+        );
+        firebase.auth().signOut();
+      }
+    });
+  }, []);
+
+  if (cloud.configured && !cloud.available) {
+    return (
+      <div className="min-h-screen font-sans flex items-center justify-center px-6 text-center" style={{ backgroundColor: "#F9EFE4" }}>
+        <p className="text-[#2B2A26]">
+          Die Online-Datenbank konnte nicht geladen werden. Bitte Internetverbindung prüfen und die Seite neu laden.
+        </p>
+      </div>
+    );
+  }
+  if (state === "local") return <RinderbestandApp />;
+  if (state === "ready") return <RinderbestandApp key={uid} />;
+  if (state === "login") return <LoginScreen error={error} />;
+  return (
+    <div className="min-h-screen font-sans flex items-center justify-center" style={{ backgroundColor: "#F9EFE4" }}>
+      <p className="text-[#8A8672]">Lade Rinderbestand…</p>
+    </div>
+  );
+}
+
 
   const root = ReactDOM.createRoot(document.getElementById("root"));
-  root.render(React.createElement(RinderbestandApp));
+  root.render(React.createElement(AuthGate));
 } catch (err) {
   var box = document.getElementById('boot-error');
   box.style.display = 'block';

@@ -1,0 +1,22 @@
+rules_version = '2';
+
+// Sicherheitsregeln für den Rinderbestand.
+// Nur die unten eingetragenen E-Mail-Adressen dürfen Daten lesen und ändern.
+// Neue Person freischalten: E-Mail hier ergänzen (kleingeschrieben) und die Regeln
+// in der Firebase-Konsole unter Firestore -> Regeln einfügen und "Veröffentlichen".
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function erlaubt() {
+      return request.auth != null
+        && request.auth.token.email != null
+        && request.auth.token.email.lower() in [
+          "erste-person@beispiel.de",
+          "zweite-person@beispiel.de"
+        ];
+    }
+
+    match /{document=**} {
+      allow read, write: if erlaubt();
+    }
+  }
+}
