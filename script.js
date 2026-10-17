@@ -1563,16 +1563,47 @@ function PendingTagCallout({ calves, onOpenAnimal }) {
   );
 }
 
-function SectionTable({ title, color, animals, onOpenAnimal, showParents, showGender, showAbgangsDatum }) {
+// Abgänge: neuestes Abgangsdatum zuerst, Tiere ohne Datum ans Ende
+function sortByAbgangsDatum(list) {
+  return [...list].sort((x, y) => {
+    if (!x.abgangsDatum && !y.abgangsDatum) return 0;
+    if (!x.abgangsDatum) return 1;
+    if (!y.abgangsDatum) return -1;
+    return x.abgangsDatum < y.abgangsDatum ? 1 : x.abgangsDatum > y.abgangsDatum ? -1 : 0;
+  });
+}
+
+function SectionTable({ title, color, animals, onOpenAnimal, showParents, showGender, showAbgangsDatum, collapsible }) {
   const mobileScroll = useContext(MobileScrollContext);
+  const [collapsed, setCollapsed] = useState(false);
+  const headerContent = (
+    <>
+      <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ backgroundColor: color.bg }} />
+      <h2 className="font-slab text-[15px] font-bold text-[#2B2A26] uppercase tracking-wide">{title}</h2>
+      <span className="text-[12px] text-[#8A8672]">({animals.length})</span>
+    </>
+  );
   return (
     <section className="mb-6">
-      <div className="flex items-center gap-2 mb-2 px-0.5">
-        <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ backgroundColor: color.bg }} />
-        <h2 className="font-slab text-[15px] font-bold text-[#2B2A26] uppercase tracking-wide">{title}</h2>
-        <span className="text-[12px] text-[#8A8672]">({animals.length})</span>
-      </div>
-      {animals.length === 0 ? (
+      {collapsible ? (
+        <button
+          type="button"
+          onClick={() => setCollapsed((v) => !v)}
+          className="w-full flex items-center gap-2 mb-2 px-0.5 text-left"
+          aria-label={collapsed ? `${title} aufklappen` : `${title} zuklappen`}
+          aria-expanded={!collapsed}
+        >
+          <ChevronRight
+            size={16}
+            className="shrink-0"
+            style={{ color: "#6B6858", transform: collapsed ? "rotate(0deg)" : "rotate(90deg)", transition: "transform 0.15s" }}
+          />
+          {headerContent}
+        </button>
+      ) : (
+        <div className="flex items-center gap-2 mb-2 px-0.5">{headerContent}</div>
+      )}
+      {collapsible && collapsed ? null : animals.length === 0 ? (
         <p className="text-sm text-[#B0A98F] italic px-0.5">Keine Tiere in diesem Abschnitt.</p>
       ) : (
         <div className={`rounded-xl border border-[#D9CFB8] bg-white ${mobileScroll ? "overflow-x-auto" : "overflow-hidden"}`}>
@@ -5253,15 +5284,17 @@ function RinderbestandApp() {
                     <SectionTable
                       title="Verendet"
                       color={{ bg: "#BB201D", fg: "#FFFFFF" }}
-                      animals={sorted.filter((a) => a.category === "Abgänge" && a.abgangsGrund === "verendet")}
+                      animals={sortByAbgangsDatum(sorted.filter((a) => a.category === "Abgänge" && a.abgangsGrund === "verendet"))}
                       showAbgangsDatum
+                      collapsible
                       onOpenAnimal={(a) => setPassAnimal(a)}
                     />
                     <SectionTable
                       title="Verkauft"
                       color={{ bg: "#FBCD49", fg: "#2B2A26" }}
-                      animals={sorted.filter((a) => a.category === "Abgänge" && a.abgangsGrund === "verkauft")}
+                      animals={sortByAbgangsDatum(sorted.filter((a) => a.category === "Abgänge" && a.abgangsGrund === "verkauft"))}
                       showAbgangsDatum
+                      collapsible
                       onOpenAnimal={(a) => setPassAnimal(a)}
                     />
                   </>
