@@ -1,0 +1,74 @@
+/* ===== Rinderbestand – Stylesheet ===== */
+
+/* Grundlayout */
+html, body { margin: 0; padding: 0; height: 100%; background: #2B2A26; }
+#root { min-height: 100%; }
+.fixed.inset-0 {
+  position: fixed !important;
+  top: 0 !important;
+  right: 0 !important;
+  bottom: 0 !important;
+  left: 0 !important;
+}
+#boot-error {
+  display: none;
+  font-family: monospace;
+  white-space: pre-wrap;
+  background: #fee;
+  color: #900;
+  padding: 20px;
+  margin: 20px;
+  border: 2px solid #900;
+  border-radius: 8px;
+}
+/* Automatisch generierte Absicherung für eckige-Klammer-Utility-Klassen */
+.bg\-\[\#4C6B3F\] { background-color: #4C6B3F !important; }
+.bg\-\[\#F9EFE4\] { background-color: #F9EFE4 !important; }
+.border\-\[\#8B3A3A\] { border-color: #8B3A3A !important; }
+.border\-\[\#C99A3B\] { border-color: #C99A3B !important; }
+.border\-\[\#D9CFB8\] { border-color: #D9CFB8 !important; }
+.border\-\[\#F9EFE4\] { border-color: #F9EFE4 !important; }
+.h\-\[68px\] { height: 68px !important; }
+.hover:bg\-\[\#3F5A34\]:hover { background-color: #3F5A34 !important; }
+.hover:bg\-\[\#F2EBDD\]:hover { background-color: #F2EBDD !important; }
+.hover:bg\-\[\#F3E3C0\]:hover { background-color: #F3E3C0 !important; }
+.hover:bg\-\[\#F9EFE4\]:hover { background-color: #F9EFE4 !important; }
+.hover:text\-\[\#2B2A26\]:hover { color: #2B2A26 !important; }
+.max\-h\-\[80vh\] { max-height: 80vh !important; }
+.max\-h\-\[85vh\] { max-height: 85vh !important; }
+.max\-w\-\[110px\] { max-width: 110px !important; }
+.min\-h\-\[72px\] { min-height: 72px !important; }
+.min\-w\-\[110px\] { min-width: 110px !important; }
+.ring\-\[\#4C6B3F\] { --tw-ring-color: #4C6B3F !important; }
+.text\-\[\#2B2A26\] { color: #2B2A26 !important; }
+.text\-\[\#6B6858\] { color: #6B6858 !important; }
+.text\-\[\#8A6D2A\] { color: #8A6D2A !important; }
+.text\-\[\#8A8672\] { color: #8A8672 !important; }
+.text\-\[\#8B3A3A\] { color: #8B3A3A !important; }
+.text\-\[\#B0A98F\] { color: #B0A98F !important; }
+.text\-\[\#B9AF95\] { color: #B9AF95 !important; }
+.text\-\[\#F2EBDD\] { color: #F2EBDD !important; }
+.text\-\[10px\] { font-size: 10px !important; }
+.text\-\[11px\] { font-size: 11px !important; }
+.text\-\[12px\] { font-size: 12px !important; }
+.text\-\[13px\] { font-size: 13px !important; }
+.text\-\[15px\] { font-size: 15px !important; }
+.text\-\[9px\] { font-size: 9px !important; }
+.tracking\-\[0\.2em\] { letter-spacing: 0.2em !important; }
+
+/* Schriften & Datumsfelder (vorher direkt in der App eingebettet) */
+.font-slab { font-family: 'Arvo', serif; }
+.font-sans { font-family: 'IBM Plex Sans', sans-serif !important; } /* !important: sonst überschreibt Tailwind diese Klasse */
+input[type="date"] {
+  display: block;
+  width: 100%;
+  box-sizing: border-box;
+}
+input[type="date"]::-webkit-calendar-picker-indicator {
+  margin-left: 4px;
+  padding: 0;
+}
+input[type="date"]::-webkit-datetime-edit {
+  overflow: hidden;
+}
+
