@@ -194,6 +194,35 @@ const Cake = function ({ size = 24, className = "", style }) {
 
 const STORAGE_KEY = "cattle:animals";
 const MobileScrollContext = createContext(false);
+// Kalb-Infos je Mutter-Ohrmarke (aktuelles Kalb, Anzahl Kalbungen) für die Mutterkühe-Tabellen
+const CowStatsContext = createContext({});
+
+function buildCowStats(animals) {
+  const byMother = {};
+  animals.forEach((a) => {
+    const m = cleanEarTag(a.motherEarTag);
+    if (!m) return;
+    (byMother[m] = byMother[m] || []).push(a);
+  });
+  const stats = {};
+  Object.entries(byMother).forEach(([mother, kids]) => {
+    // Kalbungen: Geburten, die höchstens 2 Tage auseinanderliegen (Zwillinge), zählen als eine Kalbung
+    const dates = kids.map((k) => k.birthDate).filter(Boolean).sort();
+    let kalbungen = kids.filter((k) => !k.birthDate).length;
+    let last = null;
+    dates.forEach((d) => {
+      const t = new Date(d).getTime();
+      if (last === null || t - last > 2 * 86400000) kalbungen++;
+      last = t;
+    });
+    // Aktuelles Kalb: jüngstes Kalb, das noch im Abschnitt "Kälber" steht
+    const current = kids
+      .filter((k) => k.category === "Kälber")
+      .sort((x, y) => ((x.birthDate || "") < (y.birthDate || "") ? 1 : -1))[0] || null;
+    stats[mother] = { kalbungen, currentCalf: current };
+  });
+  return stats;
+}
 const AppModeContext = createContext("admin"); // "admin" | "besucher"
 
 const CATEGORIES = ["Mutterkühe", "Kälber", "Jungrinder", "Deckbullen"];
@@ -1573,8 +1602,9 @@ function sortByAbgangsDatum(list) {
   });
 }
 
-function SectionTable({ title, color, animals, onOpenAnimal, showParents, showGender, showAbgangsDatum, collapsible }) {
+function SectionTable({ title, color, animals, onOpenAnimal, showParents, showGender, showAbgangsDatum, collapsible, showCowInfo }) {
   const mobileScroll = useContext(MobileScrollContext);
+  const cowStats = useContext(CowStatsContext);
   const [collapsed, setCollapsed] = useState(false);
   const headerContent = (
     <>
@@ -1615,6 +1645,12 @@ function SectionTable({ title, color, animals, onOpenAnimal, showParents, showGe
                 {showAbgangsDatum && <th className="text-left font-semibold px-3 py-2">Abgangsdatum</th>}
                 <th className="text-left font-semibold px-3 py-2">Geb.datum</th>
                 <th className="text-left font-semibold px-3 py-2">Alter</th>
+                {showCowInfo && (
+                  <>
+                    <th className="text-left font-semibold px-3 py-2">Akt. Kalb</th>
+                    <th className="text-left font-semibold px-3 py-2">Kalbungen</th>
+                  </>
+                )}
                 {showGender && <th className="text-left font-semibold px-3 py-2">Geschlecht</th>}
                 {showParents && (
                   <>
@@ -1641,6 +1677,16 @@ function SectionTable({ title, color, animals, onOpenAnimal, showParents, showGe
                   <td className="px-3 py-2 text-[#2B2A26]">
                     {formatAgeShort(a.birthDate, a.category === "Abgänge" && a.abgangsDatum ? a.abgangsDatum : undefined)}
                   </td>
+                  {showCowInfo && (
+                    <>
+                      <td className="px-3 py-2 text-[#2B2A26]">
+                        {shortEarTag(cowStats[cleanEarTag(a.earTag)]?.currentCalf?.earTag) || "–"}
+                      </td>
+                      <td className="px-3 py-2 text-[#2B2A26]" style={{ fontVariantNumeric: "tabular-nums" }}>
+                        {cowStats[cleanEarTag(a.earTag)]?.kalbungen || 0}
+                      </td>
+                    </>
+                  )}
                   {showGender && <td className="px-3 py-2 text-[#2B2A26]">{genderLabel(a.gender)}</td>}
                   {showParents && (
                     <>
@@ -3905,7 +3951,7 @@ function useStaelle() {
   return { staelle, loaded };
 }
 
-function AnimalsByStallView({ animals, color, onOpenAnimal, showParents, showGender }) {
+function AnimalsByStallView({ animals, color, onOpenAnimal, showParents, showGender, showCowInfo }) {
   const { staelle, loaded } = useStaelle();
   if (!loaded) return null;
 
@@ -3928,6 +3974,7 @@ function AnimalsByStallView({ animals, color, onOpenAnimal, showParents, showGen
           animals={g.animals}
           onOpenAnimal={onOpenAnimal}
           showParents={showParents}
+          showCowInfo={showCowInfo}
           showGender={showGender}
         />
       ))}
@@ -3938,6 +3985,7 @@ function AnimalsByStallView({ animals, color, onOpenAnimal, showParents, showGen
           animals={ohneStall}
           onOpenAnimal={onOpenAnimal}
           showParents={showParents}
+          showCowInfo={showCowInfo}
           showGender={showGender}
         />
       )}
@@ -4769,6 +4817,8 @@ function RinderbestandApp() {
     return map;
   }, [sorted]);
 
+  const cowStats = useMemo(() => buildCowStats(animals), [animals]);
+
   const birthsByDate = useMemo(() => {
     const map = {};
     animals.forEach((a) => {
@@ -4961,6 +5011,7 @@ function RinderbestandApp() {
   return (
     <AppModeContext.Provider value={appMode}>
     <MobileScrollContext.Provider value={mobileScrollMode}>
+    <CowStatsContext.Provider value={cowStats}>
     <div className="min-h-screen font-sans" style={{ backgroundColor: "#F9EFE4" }}>
 
       <header
@@ -5247,6 +5298,7 @@ function RinderbestandApp() {
                     onOpenAnimal={(a) => setPassAnimal(a)}
                     showParents={cat === "Kälber" || cat === "Jungrinder"}
                     showGender={cat === "Kälber"}
+                    showCowInfo={cat === "Mutterkühe"}
                   />
                 ))
               : stallAnsicht && CATEGORIES.includes(listView)
@@ -5257,6 +5309,7 @@ function RinderbestandApp() {
                     onOpenAnimal={(a) => setPassAnimal(a)}
                     showParents={listView === "Kälber" || listView === "Jungrinder"}
                     showGender={listView === "Kälber"}
+                    showCowInfo={listView === "Mutterkühe"}
                   />
                 )
               : listView === "Mutterkühe"
@@ -5267,6 +5320,7 @@ function RinderbestandApp() {
                     color={colorForCategory("Mutterkühe")}
                     animals={groupCowsByTier(byCategory["Mutterkühe"] || [])[tier]}
                     onOpenAnimal={(a) => setPassAnimal(a)}
+                    showCowInfo
                   />
                 ))
               : listView === "Unregistriert"
@@ -5965,6 +6019,7 @@ function RinderbestandApp() {
         </div>
       )}
     </div>
+    </CowStatsContext.Provider>
     </MobileScrollContext.Provider>
     </AppModeContext.Provider>
   );
