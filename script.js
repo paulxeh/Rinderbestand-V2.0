@@ -361,6 +361,20 @@ const STORAGE_KEY = "cattle:animals";
 const MobileScrollContext = createContext(false);
 // Kalb-Infos je Mutter-Ohrmarke (aktuelles Kalb, Anzahl Kalbungen) für die Mutterkühe-Tabellen
 const CowStatsContext = createContext({});
+// Erster weiblicher / männlicher Nachkomme je Vater-Ohrmarke für die Deckbullen-Tabellen
+const BullStatsContext = createContext({});
+
+function buildBullStats(animals) {
+  const stats = {};
+  animals.forEach((a) => {
+    const f = cleanEarTag(a.fatherEarTag);
+    if (!f || !a.birthDate) return;
+    const s = (stats[f] = stats[f] || { firstFemale: null, firstMale: null });
+    const key = a.gender === "weiblich" ? "firstFemale" : a.gender === "männlich" ? "firstMale" : null;
+    if (key && (!s[key] || a.birthDate < s[key].birthDate)) s[key] = a;
+  });
+  return stats;
+}
 
 function buildCowStats(animals) {
   const byMother = {};
@@ -1769,9 +1783,11 @@ function sortByAbgangsDatum(list) {
   });
 }
 
-function SectionTable({ title, color, animals, onOpenAnimal, showParents, showGender, showAbgangsDatum, collapsible, showCowInfo }) {
+function SectionTable({ title, color, animals, onOpenAnimal, showParents, showGender, showAbgangsDatum, collapsible, showCowInfo, showBullInfo }) {
   const mobileScroll = useContext(MobileScrollContext);
   const cowStats = useContext(CowStatsContext);
+  const bullStats = useContext(BullStatsContext);
+  const kidCell = (k) => (k ? `${shortEarTag(k.earTag) || "ausstehend"} · ${formatDate(k.birthDate)}` : "–");
   const [collapsed, setCollapsed] = useState(false);
   const headerContent = (
     <>
@@ -1812,6 +1828,12 @@ function SectionTable({ title, color, animals, onOpenAnimal, showParents, showGe
                 {showAbgangsDatum && <th className="text-left font-semibold px-3 py-2">Abgangsdatum</th>}
                 <th className="text-left font-semibold px-3 py-2">Geb.datum</th>
                 <th className="text-left font-semibold px-3 py-2">Alter</th>
+                {showBullInfo && (
+                  <>
+                    <th className="text-left font-semibold px-3 py-2">1. weibl. Nachkomme</th>
+                    <th className="text-left font-semibold px-3 py-2">1. männl. Nachkomme</th>
+                  </>
+                )}
                 {showCowInfo && (
                   <>
                     <th className="text-left font-semibold px-3 py-2">Akt. Kalb</th>
@@ -1845,6 +1867,12 @@ function SectionTable({ title, color, animals, onOpenAnimal, showParents, showGe
                   <td className="px-3 py-2 text-[#2B2A26]">
                     {formatAgeShort(a.birthDate, a.category === "Abgänge" && a.abgangsDatum ? a.abgangsDatum : undefined)}
                   </td>
+                  {showBullInfo && (
+                    <>
+                      <td className="px-3 py-2 text-[#2B2A26] whitespace-nowrap">{kidCell(bullStats[cleanEarTag(a.earTag)]?.firstFemale)}</td>
+                      <td className="px-3 py-2 text-[#2B2A26] whitespace-nowrap">{kidCell(bullStats[cleanEarTag(a.earTag)]?.firstMale)}</td>
+                    </>
+                  )}
                   {showCowInfo && (
                     <>
                       <td className="px-3 py-2 text-[#2B2A26]">
@@ -4454,7 +4482,7 @@ function useStaelle() {
   return { staelle, loaded };
 }
 
-function AnimalsByStallView({ animals, color, onOpenAnimal, showParents, showGender, showCowInfo }) {
+function AnimalsByStallView({ animals, color, onOpenAnimal, showParents, showGender, showCowInfo, showBullInfo }) {
   const { staelle, loaded } = useStaelle();
   if (!loaded) return null;
 
@@ -4478,6 +4506,7 @@ function AnimalsByStallView({ animals, color, onOpenAnimal, showParents, showGen
           onOpenAnimal={onOpenAnimal}
           showParents={showParents}
           showCowInfo={showCowInfo}
+          showBullInfo={showBullInfo}
           showGender={showGender}
         />
       ))}
@@ -4489,6 +4518,7 @@ function AnimalsByStallView({ animals, color, onOpenAnimal, showParents, showGen
           onOpenAnimal={onOpenAnimal}
           showParents={showParents}
           showCowInfo={showCowInfo}
+          showBullInfo={showBullInfo}
           showGender={showGender}
         />
       )}
@@ -5339,6 +5369,7 @@ function RinderbestandApp() {
   }, [sorted]);
 
   const cowStats = useMemo(() => buildCowStats(animals), [animals]);
+  const bullStats = useMemo(() => buildBullStats(animals), [animals]);
 
   const birthsByDate = useMemo(() => {
     const map = {};
@@ -5533,6 +5564,7 @@ function RinderbestandApp() {
     <AppModeContext.Provider value={appMode}>
     <MobileScrollContext.Provider value={mobileScrollMode}>
     <CowStatsContext.Provider value={cowStats}>
+    <BullStatsContext.Provider value={bullStats}>
     <div className="min-h-screen font-sans" style={{ backgroundColor: "#F9EFE4" }}>
 
       <header
@@ -5823,6 +5855,7 @@ function RinderbestandApp() {
                     showParents={cat === "Kälber" || cat === "Jungrinder"}
                     showGender={cat === "Kälber"}
                     showCowInfo={cat === "Mutterkühe"}
+                    showBullInfo={cat === "Deckbullen"}
                   />
                 ))
               : stallAnsicht && CATEGORIES.includes(listView)
@@ -5834,6 +5867,7 @@ function RinderbestandApp() {
                     showParents={listView === "Kälber" || listView === "Jungrinder"}
                     showGender={listView === "Kälber"}
                     showCowInfo={listView === "Mutterkühe"}
+                    showBullInfo={listView === "Deckbullen"}
                   />
                 )
               : listView === "Mutterkühe"
@@ -5889,6 +5923,7 @@ function RinderbestandApp() {
                       onOpenAnimal={(a) => setPassAnimal(a)}
                       showParents={listView === "Kälber" || listView === "Jungrinder"}
                       showGender={listView === "Kälber"}
+                      showBullInfo={listView === "Deckbullen"}
                     />
                   </>
                 )}
@@ -6564,6 +6599,7 @@ function RinderbestandApp() {
         </div>
       )}
     </div>
+    </BullStatsContext.Provider>
     </CowStatsContext.Provider>
     </MobileScrollContext.Provider>
     </AppModeContext.Provider>
