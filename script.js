@@ -363,6 +363,35 @@ const MobileScrollContext = createContext(false);
 const CowStatsContext = createContext({});
 // Erster weiblicher / männlicher Nachkomme je Vater-Ohrmarke für die Deckbullen-Tabellen
 const BullStatsContext = createContext({});
+// Liste aller Deckbullen (für Bullen-Auswahl bei der Besamung und "Vater des Kalbs")
+const BullsContext = createContext([]);
+
+// Deckbulle, der zu einem Datum im selben Stall wie die Kuh stand (aus Stall-Bewegungen)
+function deckbulleImStall(cow, bulls, dateISO) {
+  const mine = buildStallTimeline(cow);
+  for (const bull of bulls) {
+    for (const segA of mine) {
+      for (const segB of buildStallTimeline(bull)) {
+        const ov = overlapPeriod(segA, segB);
+        if (ov && (!ov.from || ov.from <= dateISO) && (!ov.to || ov.to >= dateISO)) return bull;
+      }
+    }
+  }
+  return null;
+}
+
+// Vater des erwarteten Kalbs: bei der Besamung gewählter Bulle, sonst Deckbulle im selben Stall
+function calfFather(cow, bulls) {
+  if (cow.lastInseminationBull) {
+    const bull = bulls.find((b) => sameEarTag(b.earTag, cow.lastInseminationBull)) || null;
+    return { tag: cow.lastInseminationBull, bull, geschaetzt: false };
+  }
+  const relevant = cow.pregnancyConfirmed || cow.expectedCalvingDate || cow.lastInseminationDate;
+  if (!relevant) return null;
+  const dateISO = cow.lastInseminationDate || cow.lastHeatDate || isoDateKey(new Date());
+  const bull = deckbulleImStall(cow, bulls, dateISO);
+  return bull ? { tag: bull.earTag, bull, geschaetzt: true } : null;
+}
 
 function buildBullStats(animals) {
   const stats = {};
@@ -2817,10 +2846,9 @@ function StallbuchView({ animal, allAnimals = [], onBack, onOpenAnimal, onUpdate
   const eka = calvings.length && current.birthDate ? formatMonthsDecimal(current.birthDate, calvings[0].date) : "–";
 
   // Belegungen zur letzten Kalbung (zwischen vorletzter und letzter Kalbung) bzw. seit letzter Kalbung
-  const besamungen = (current.history || [])
-    .filter((e) => e.type === "besamung" && e.date)
-    .map((e) => e.date)
-    .sort();
+  const besamungEvents = (current.history || []).filter((e) => e.type === "besamung" && e.date);
+  const besamungen = besamungEvents.map((e) => e.date).sort();
+  const bullTagOn = (d) => (besamungEvents.find((e) => e.date === d && e.bull) || {}).bull || "";
   const lastCalving = calvings.length ? calvings[calvings.length - 1].date : null;
   const prevCalving = calvings.length > 1 ? calvings[calvings.length - 2].date : null;
   const zurLetzten = lastCalving ? besamungen.filter((d) => d < lastCalving && (!prevCalving || d > prevCalving)) : [];
@@ -2833,18 +2861,11 @@ function StallbuchView({ animal, allAnimals = [], onBack, onOpenAnimal, onUpdate
   })();
 
   // Bulle bei der Besamung: Deckbulle, der zu diesem Datum im selben Stall stand (aus Stall-Bewegungen)
+  const allBulls = allAnimals.filter((a) => a.category === "Deckbullen" || a.originalCategory === "Deckbullen");
   const bullOn = (dateISO) => {
-    const mine = buildStallTimeline(current);
-    const bulls = allAnimals.filter((a) => a.category === "Deckbullen" || a.originalCategory === "Deckbullen");
-    for (const bull of bulls) {
-      for (const segA of mine) {
-        for (const segB of buildStallTimeline(bull)) {
-          const ov = overlapPeriod(segA, segB);
-          if (ov && (!ov.from || ov.from <= dateISO) && (!ov.to || ov.to >= dateISO)) return bull;
-        }
-      }
-    }
-    return null;
+    const chosen = bullTagOn(dateISO);
+    if (chosen) return find(chosen) || { earTag: chosen, name: "", breedCode: "" };
+    return deckbulleImStall(current, allBulls, dateISO);
   };
 
   const belegRows = (list) =>
@@ -2979,7 +3000,7 @@ function StallbuchView({ animal, allAnimals = [], onBack, onOpenAnimal, onUpdate
               {zurLetzten.length === 0 ? (
                 <p className="px-3 py-3 text-sm text-[#8A8672] italic">Keine Besamungen zwischen den letzten beiden Kalbungen erfasst.</p>
               ) : (
-                <SbTable minWidth={420} head={["BF", "Datum", "Bulle (im Stall)", "Rasse"]} rows={belegRows(zurLetzten)} />
+                <SbTable minWidth={420} head={["BF", "Datum", "Bulle", "Rasse"]} rows={belegRows(zurLetzten)} />
               )}
               <div className="grid grid-cols-3 border-t border-[#D9CFB8]">
                 <SbField label="Rastzeit">{fertility ? `${fertility.rast} Tage` : ""}</SbField>
@@ -2992,10 +3013,10 @@ function StallbuchView({ animal, allAnimals = [], onBack, onOpenAnimal, onUpdate
               {seitLetzter.length === 0 ? (
                 <p className="px-3 py-3 text-sm text-[#8A8672] italic">Keine Besamungen erfasst.</p>
               ) : (
-                <SbTable minWidth={420} head={["BF", "Datum", "Bulle (im Stall)", "Rasse"]} rows={belegRows(seitLetzter)} />
+                <SbTable minWidth={420} head={["BF", "Datum", "Bulle", "Rasse"]} rows={belegRows(seitLetzter)} />
               )}
               <p className="px-3 py-2 text-[11px] text-[#6B6858] border-t border-[#D9CFB8]">
-                BF = Besamungsfolge · Rastzeit = Kalbung bis 1. Besamung · Güstzeit = Kalbung bis letzte Besamung vor der nächsten Kalbung · Verzögerungszeit = Güstzeit − Rastzeit. Der Bulle wird aus den Stall-Bewegungen ermittelt (Deckbulle im selben Stall).
+                BF = Besamungsfolge · Rastzeit = Kalbung bis 1. Besamung · Güstzeit = Kalbung bis letzte Besamung vor der nächsten Kalbung · Verzögerungszeit = Güstzeit − Rastzeit. Bulle = bei der Besamung gewählt; sonst der Deckbulle, der laut Stall-Bewegungen im selben Stall stand.
               </p>
             </SbBox>
           </>
@@ -3398,9 +3419,9 @@ function BirthCalendar({ birthsByDate, onOpenAnimal, animals, onUpdateAnimal, on
   const verkaufteAnimals = (animals || []).filter((a) => a.category === "Abgänge" && a.abgangsGrund === "verkauft" && a.abgangsDatum);
   const todayRef = new Date();
 
-  const addHistoryEvent = (animal, type, date) => {
+  const addHistoryEvent = (animal, type, date, extra) => {
     const history = Array.isArray(animal.history) ? animal.history : [];
-    onUpdateAnimal(animal.id, { history: [...history, { type, date }] });
+    onUpdateAnimal(animal.id, { history: [...history, { type, date, ...(extra || {}) }] });
   };
 
   const { year, month: m } = month;
@@ -4212,6 +4233,8 @@ function BreedingRow({ animal, onOpenAnimal, onUpdateAnimal, addHistoryEvent, on
   const todayISO = isoDateKey(new Date());
   const [brunstDate, setBrunstDate] = useState(animal.lastHeatDate || "");
   const [besamungDate, setBesamungDate] = useState(animal.lastInseminationDate || "");
+  const bulls = useContext(BullsContext);
+  const [besamungBull, setBesamungBull] = useState(animal.lastInseminationBull || (bulls.length === 1 ? bulls[0].earTag : ""));
   const [directPregnancyDate, setDirectPregnancyDate] = useState(todayISO);
 
   const next = nextExpectedHeat(animal);
@@ -4230,8 +4253,8 @@ function BreedingRow({ animal, onOpenAnimal, onUpdateAnimal, addHistoryEvent, on
   };
   const saveBesamung = () => {
     if (!besamungDate) return;
-    onUpdateAnimal(animal.id, { lastInseminationDate: besamungDate });
-    addHistoryEvent(animal, "besamung", besamungDate);
+    onUpdateAnimal(animal.id, { lastInseminationDate: besamungDate, lastInseminationBull: besamungBull || "" });
+    addHistoryEvent(animal, "besamung", besamungDate, besamungBull ? { bull: besamungBull } : undefined);
     setOpenPanel(null);
   };
   const confirmAusgefallen = () => {
@@ -4376,6 +4399,21 @@ function BreedingRow({ animal, onOpenAnimal, onUpdateAnimal, addHistoryEvent, on
       {openPanel === "besamung" && (
         <div className="flex items-center gap-2 mb-2">
           <input type="date" value={besamungDate} max={todayISO} onChange={(e) => setBesamungDate(e.target.value)} className="px-2 py-1.5 rounded-lg border text-sm" style={{ borderColor: "#9CA3AF" }} />
+          <select
+            value={besamungBull}
+            onChange={(e) => setBesamungBull(e.target.value)}
+            className="px-2 py-1.5 rounded-lg border text-sm bg-white max-w-[180px]"
+            style={{ borderColor: "#9CA3AF" }}
+            aria-label="Bulle"
+          >
+            <option value="">Bulle unbekannt</option>
+            {bulls.map((b) => (
+              <option key={b.id} value={b.earTag}>
+                {shortEarTag(b.earTag)}
+                {b.name ? ` · ${b.name}` : ""}
+              </option>
+            ))}
+          </select>
           <button type="button" onClick={saveBesamung} className="text-xs font-semibold rounded-lg px-3 py-1.5" style={{ backgroundColor: "#394146", color: "#F7EFE9" }}>
             Besamung speichern
           </button>
@@ -4590,6 +4628,13 @@ function BrunstlisteView({ animals, onOpenAnimal, onUpdateAnimal, addHistoryEven
     if (n === 0) return "heute";
     return n > 0 ? `in ${n} T` : `vor ${-n} T`;
   };
+  const bulls = useContext(BullsContext);
+  const fatherCell = (a) => {
+    const f = calfFather(a, bulls);
+    if (!f) return "–";
+    const label = `${shortEarTag(f.tag)}${f.bull?.name ? ` · ${f.bull.name}` : ""}`;
+    return f.geschaetzt ? `${label} (Stall)` : label;
+  };
   const statusOf = (a) =>
     a.pregnancyConfirmed ? "trächtig" : a.expectedCalvingDate ? "vermutet trächtig" : "offen";
 
@@ -4698,7 +4743,7 @@ function BrunstlisteView({ animals, onOpenAnimal, onUpdateAnimal, addHistoryEven
           </p>
         ) : ansicht === "tabelle" ? (
           <div className={`rounded-xl border border-[#D9CFB8] bg-white ${mobileScroll ? "overflow-x-auto" : "overflow-x-auto"}`}>
-            <table className="w-full text-[13px]" style={{ borderCollapse: "separate", borderSpacing: 0, minWidth: 720 }}>
+            <table className="w-full text-[13px]" style={{ borderCollapse: "separate", borderSpacing: 0, minWidth: 800 }}>
               <thead>
                 <tr className="bg-white text-[#6B6858] text-[11px] uppercase tracking-wide">
                   <th className="text-left font-semibold px-3 py-2">Name</th>
@@ -4708,6 +4753,7 @@ function BrunstlisteView({ animals, onOpenAnimal, onUpdateAnimal, addHistoryEven
                   <th className="text-left font-semibold px-3 py-2">Nächste Brunst</th>
                   <th className="text-left font-semibold px-3 py-2">Letzte Besamung</th>
                   <th className="text-left font-semibold px-3 py-2">Status</th>
+                  <th className="text-left font-semibold px-3 py-2">Vater (Kalb)</th>
                   <th className="text-left font-semibold px-3 py-2">Erw. Kalbung</th>
                   <th className="w-6 px-2 py-2"></th>
                 </tr>
@@ -4730,6 +4776,7 @@ function BrunstlisteView({ animals, onOpenAnimal, onUpdateAnimal, addHistoryEven
                       </td>
                       <td className="px-3 py-2 text-[#2B2A26] whitespace-nowrap">{dateOrDash(a.lastInseminationDate)}</td>
                       <td className="px-3 py-2 text-[#2B2A26] whitespace-nowrap">{statusOf(a)}</td>
+                      <td className="px-3 py-2 text-[#2B2A26] whitespace-nowrap">{fatherCell(a)}</td>
                       <td className="px-3 py-2 text-[#2B2A26] whitespace-nowrap">
                         {a.expectedCalvingDate ? `${dateOrDash(a.expectedCalvingDate)} (${inDays(a.expectedCalvingDate)})` : a.pregnancyConfirmed ? "unbekannt" : "–"}
                       </td>
@@ -5466,6 +5513,7 @@ function RinderbestandApp() {
 
   const cowStats = useMemo(() => buildCowStats(animals), [animals]);
   const bullStats = useMemo(() => buildBullStats(animals), [animals]);
+  const bullsList = useMemo(() => animals.filter((a) => a.category === "Deckbullen"), [animals]);
 
   const birthsByDate = useMemo(() => {
     const map = {};
@@ -5661,6 +5709,7 @@ function RinderbestandApp() {
     <MobileScrollContext.Provider value={mobileScrollMode}>
     <CowStatsContext.Provider value={cowStats}>
     <BullStatsContext.Provider value={bullStats}>
+    <BullsContext.Provider value={bullsList}>
     <div className="min-h-screen font-sans" style={{ backgroundColor: "#F9EFE4" }}>
 
       <header
@@ -5738,9 +5787,9 @@ function RinderbestandApp() {
               animals={animals.filter((a) => a.category === "Mutterkühe" || a.category === "Jungrinder")}
               onOpenAnimal={(a) => setPassAnimal(a)}
               onUpdateAnimal={handleUpdateField}
-              addHistoryEvent={(animal, type, date) => {
+              addHistoryEvent={(animal, type, date, extra) => {
                 const history = Array.isArray(animal.history) ? animal.history : [];
-                handleUpdateField(animal.id, { history: [...history, { type, date }] });
+                handleUpdateField(animal.id, { history: [...history, { type, date, ...(extra || {}) }] });
               }}
               onOpenHistory={(a) => {
                 setHistorieAnimal(a);
@@ -6513,9 +6562,9 @@ function RinderbestandApp() {
           animals={animals.filter((a) => a.category === "Mutterkühe" || a.category === "Jungrinder")}
           onOpenAnimal={(a) => setPassAnimal(a)}
           onUpdateAnimal={handleUpdateField}
-          addHistoryEvent={(animal, type, date) => {
+          addHistoryEvent={(animal, type, date, extra) => {
             const history = Array.isArray(animal.history) ? animal.history : [];
-            handleUpdateField(animal.id, { history: [...history, { type, date }] });
+            handleUpdateField(animal.id, { history: [...history, { type, date, ...(extra || {}) }] });
           }}
           onOpenHistory={(a) => {
             setHistorieAnimal(a);
@@ -6698,6 +6747,7 @@ function RinderbestandApp() {
         </div>
       )}
     </div>
+    </BullsContext.Provider>
     </BullStatsContext.Provider>
     </CowStatsContext.Provider>
     </MobileScrollContext.Provider>
