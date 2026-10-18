@@ -400,7 +400,9 @@ function buildCowStats(animals) {
       .sort((x, y) => ((x.birthDate || "") < (y.birthDate || "") ? 1 : -1))[0] || null;
     // Letzte Kalbung: jüngstes Geburtsdatum aller Kälber dieser Mutter
     const lastCalving = dates.length ? dates[dates.length - 1] : null;
-    stats[mother] = { kalbungen, currentCalf: current, lastCalving };
+    // Erste Kalbung: ältestes Kalb dieser Mutter
+    const firstCalf = kids.filter((k) => k.birthDate).sort((x, y) => (x.birthDate < y.birthDate ? -1 : 1))[0] || null;
+    stats[mother] = { kalbungen, currentCalf: current, lastCalving, firstCalf };
   });
   return stats;
 }
@@ -1783,7 +1785,7 @@ function sortByAbgangsDatum(list) {
   });
 }
 
-function SectionTable({ title, color, animals, onOpenAnimal, showParents, showGender, showAbgangsDatum, collapsible, showCowInfo, showBullInfo }) {
+function SectionTable({ title, color, animals, onOpenAnimal, showParents, showGender, showAbgangsDatum, collapsible, showCowInfo, showBullInfo, showFirstCalving }) {
   const mobileScroll = useContext(MobileScrollContext);
   const cowStats = useContext(CowStatsContext);
   const bullStats = useContext(BullStatsContext);
@@ -1828,6 +1830,7 @@ function SectionTable({ title, color, animals, onOpenAnimal, showParents, showGe
                 {showAbgangsDatum && <th className="text-left font-semibold px-3 py-2">Abgangsdatum</th>}
                 <th className="text-left font-semibold px-3 py-2">Geb.datum</th>
                 <th className="text-left font-semibold px-3 py-2">Alter</th>
+                {showFirstCalving && <th className="text-left font-semibold px-3 py-2">1. Kalbung</th>}
                 {showBullInfo && (
                   <>
                     <th className="text-left font-semibold px-3 py-2">1. weibl. Nachkomme</th>
@@ -1867,6 +1870,9 @@ function SectionTable({ title, color, animals, onOpenAnimal, showParents, showGe
                   <td className="px-3 py-2 text-[#2B2A26]">
                     {formatAgeShort(a.birthDate, a.category === "Abgänge" && a.abgangsDatum ? a.abgangsDatum : undefined)}
                   </td>
+                  {showFirstCalving && (
+                    <td className="px-3 py-2 text-[#2B2A26] whitespace-nowrap">{kidCell(cowStats[cleanEarTag(a.earTag)]?.firstCalf)}</td>
+                  )}
                   {showBullInfo && (
                     <>
                       <td className="px-3 py-2 text-[#2B2A26] whitespace-nowrap">{kidCell(bullStats[cleanEarTag(a.earTag)]?.firstFemale)}</td>
@@ -4482,7 +4488,7 @@ function useStaelle() {
   return { staelle, loaded };
 }
 
-function AnimalsByStallView({ animals, color, onOpenAnimal, showParents, showGender, showCowInfo, showBullInfo }) {
+function AnimalsByStallView({ animals, color, onOpenAnimal, showParents, showGender, showCowInfo, showBullInfo, showFirstCalving }) {
   const { staelle, loaded } = useStaelle();
   if (!loaded) return null;
 
@@ -4507,6 +4513,7 @@ function AnimalsByStallView({ animals, color, onOpenAnimal, showParents, showGen
           showParents={showParents}
           showCowInfo={showCowInfo}
           showBullInfo={showBullInfo}
+          showFirstCalving={showFirstCalving}
           showGender={showGender}
         />
       ))}
@@ -4519,6 +4526,7 @@ function AnimalsByStallView({ animals, color, onOpenAnimal, showParents, showGen
           showParents={showParents}
           showCowInfo={showCowInfo}
           showBullInfo={showBullInfo}
+          showFirstCalving={showFirstCalving}
           showGender={showGender}
         />
       )}
@@ -5856,6 +5864,7 @@ function RinderbestandApp() {
                     showGender={cat === "Kälber"}
                     showCowInfo={cat === "Mutterkühe"}
                     showBullInfo={cat === "Deckbullen"}
+                    showFirstCalving={cat === "Jungrinder"}
                   />
                 ))
               : stallAnsicht && CATEGORIES.includes(listView)
@@ -5868,6 +5877,7 @@ function RinderbestandApp() {
                     showGender={listView === "Kälber"}
                     showCowInfo={listView === "Mutterkühe"}
                     showBullInfo={listView === "Deckbullen"}
+                    showFirstCalving={listView === "Jungrinder"}
                   />
                 )
               : listView === "Mutterkühe"
@@ -5924,6 +5934,7 @@ function RinderbestandApp() {
                       showParents={listView === "Kälber" || listView === "Jungrinder"}
                       showGender={listView === "Kälber"}
                       showBullInfo={listView === "Deckbullen"}
+                      showFirstCalving={listView === "Jungrinder"}
                     />
                   </>
                 )}
