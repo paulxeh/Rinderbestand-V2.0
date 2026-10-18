@@ -384,7 +384,9 @@ function buildCowStats(animals) {
     const current = kids
       .filter((k) => k.category === "Kälber")
       .sort((x, y) => ((x.birthDate || "") < (y.birthDate || "") ? 1 : -1))[0] || null;
-    stats[mother] = { kalbungen, currentCalf: current };
+    // Letzte Kalbung: jüngstes Geburtsdatum aller Kälber dieser Mutter
+    const lastCalving = dates.length ? dates[dates.length - 1] : null;
+    stats[mother] = { kalbungen, currentCalf: current, lastCalving };
   });
   return stats;
 }
@@ -1813,6 +1815,7 @@ function SectionTable({ title, color, animals, onOpenAnimal, showParents, showGe
                 {showCowInfo && (
                   <>
                     <th className="text-left font-semibold px-3 py-2">Akt. Kalb</th>
+                    <th className="text-left font-semibold px-3 py-2">Letzte Kalbung</th>
                     <th className="text-left font-semibold px-3 py-2">Kalbungen</th>
                   </>
                 )}
@@ -1846,6 +1849,9 @@ function SectionTable({ title, color, animals, onOpenAnimal, showParents, showGe
                     <>
                       <td className="px-3 py-2 text-[#2B2A26]">
                         {shortEarTag(cowStats[cleanEarTag(a.earTag)]?.currentCalf?.earTag) || "–"}
+                      </td>
+                      <td className="px-3 py-2 text-[#2B2A26]" title={cowStats[cleanEarTag(a.earTag)]?.lastCalving ? `am ${formatDate(cowStats[cleanEarTag(a.earTag)].lastCalving)}` : undefined}>
+                        {cowStats[cleanEarTag(a.earTag)]?.lastCalving ? `vor ${formatAgeShort(cowStats[cleanEarTag(a.earTag)].lastCalving)}` : "–"}
                       </td>
                       <td className="px-3 py-2 text-[#2B2A26]" style={{ fontVariantNumeric: "tabular-nums" }}>
                         {cowStats[cleanEarTag(a.earTag)]?.kalbungen || 0}
