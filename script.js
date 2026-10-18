@@ -4566,6 +4566,32 @@ function BrunstVorschauCard({ animals, onOpenAnimal, onUpdateAnimal, addHistoryE
 function BrunstlisteView({ animals, onOpenAnimal, onUpdateAnimal, addHistoryEvent, onOpenHistory, onBack, onOpenAddCalf }) {
   const [breedingSortBy, setBreedingSortBy] = useState("naechste-brunst");
   const [breedingSearch, setBreedingSearch] = useState("");
+  const mobileScroll = useContext(MobileScrollContext);
+  // Ansicht: Karten (mit Eintragen-Knöpfen) oder Tabelle; Wahl wird pro Gerät gemerkt
+  const [ansicht, setAnsichtRaw] = useState(() => {
+    try {
+      return localStorage.getItem("cattle:brunstlisteAnsicht") === "tabelle" ? "tabelle" : "karten";
+    } catch (e) {
+      return "karten";
+    }
+  });
+  const setAnsicht = (v) => {
+    setAnsichtRaw(v);
+    try {
+      localStorage.setItem("cattle:brunstlisteAnsicht", v);
+    } catch (e) {}
+  };
+  const todayMid = new Date();
+  todayMid.setHours(0, 0, 0, 0);
+  const dateOrDash = (d) => (d ? formatDate(d) : "–");
+  const inDays = (d) => {
+    if (!d) return "";
+    const n = Math.round((new Date(d).setHours(0, 0, 0, 0) - todayMid) / 86400000);
+    if (n === 0) return "heute";
+    return n > 0 ? `in ${n} T` : `vor ${-n} T`;
+  };
+  const statusOf = (a) =>
+    a.pregnancyConfirmed ? "trächtig" : a.expectedCalvingDate ? "vermutet trächtig" : "offen";
 
   const sorted = animals.slice().sort((a, b) => {
     let av, bv;
@@ -4633,7 +4659,23 @@ function BrunstlisteView({ animals, onOpenAnimal, onUpdateAnimal, addHistoryEven
           className="w-full mb-3 px-3 py-2 rounded-lg border text-sm"
           style={{ borderColor: "#D9CFB8" }}
         />
-        <div className="flex items-center gap-2 mb-4">
+        <div className="flex items-center gap-2 mb-4 flex-wrap">
+          <div className="flex rounded-full border border-[#D9CFB8] bg-white p-0.5 gap-0.5 text-[11px]">
+            {[
+              ["karten", "Karten"],
+              ["tabelle", "Tabelle"],
+            ].map(([key, label]) => (
+              <button
+                key={key}
+                type="button"
+                onClick={() => setAnsicht(key)}
+                className="rounded-full px-2.5 py-1 font-semibold"
+                style={ansicht === key ? { backgroundColor: "#2B2A26", color: "#F2EBDD" } : { color: "#6B6858" }}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
           <label className="text-xs" style={{ color: "#6B6858" }}>
             Sortieren nach:
           </label>
@@ -4654,6 +4696,52 @@ function BrunstlisteView({ animals, onOpenAnimal, onUpdateAnimal, addHistoryEven
           <p className="text-sm text-center py-6" style={{ color: "#B0A98F" }}>
             {searchTerm ? "Kein Tier gefunden." : "Noch keine Mutterkühe oder Jungrinder erfasst."}
           </p>
+        ) : ansicht === "tabelle" ? (
+          <div className={`rounded-xl border border-[#D9CFB8] bg-white ${mobileScroll ? "overflow-x-auto" : "overflow-x-auto"}`}>
+            <table className="w-full text-[13px]" style={{ borderCollapse: "separate", borderSpacing: 0, minWidth: 720 }}>
+              <thead>
+                <tr className="bg-white text-[#6B6858] text-[11px] uppercase tracking-wide">
+                  <th className="text-left font-semibold px-3 py-2">Name</th>
+                  <th className="text-left font-semibold px-3 py-2">Ohrmarke</th>
+                  <th className="text-left font-semibold px-3 py-2">Abschnitt</th>
+                  <th className="text-left font-semibold px-3 py-2">Letzte Brunst</th>
+                  <th className="text-left font-semibold px-3 py-2">Nächste Brunst</th>
+                  <th className="text-left font-semibold px-3 py-2">Letzte Besamung</th>
+                  <th className="text-left font-semibold px-3 py-2">Status</th>
+                  <th className="text-left font-semibold px-3 py-2">Erw. Kalbung</th>
+                  <th className="w-6 px-2 py-2"></th>
+                </tr>
+              </thead>
+              <tbody>
+                {filtered.map((a) => {
+                  const next = a.pregnancyConfirmed ? null : nextExpectedHeat(a);
+                  return (
+                    <tr
+                      key={a.id}
+                      onClick={() => onOpenHistory(a)}
+                      className="border-t border-[#F9EFE4] cursor-pointer bg-white hover:bg-[#F9EFE4] transition"
+                    >
+                      <td className="px-3 py-2 text-[#2B2A26] font-medium truncate max-w-[110px]">{a.name || "–"}</td>
+                      <td className="px-3 py-2 text-[#2B2A26] whitespace-nowrap">{formatEarTag(a.earTag) || "ausstehend"}</td>
+                      <td className="px-3 py-2 text-[#2B2A26]">{CATEGORY_SINGULAR[a.category] || a.category}</td>
+                      <td className="px-3 py-2 text-[#2B2A26] whitespace-nowrap">{dateOrDash(a.lastHeatDate)}</td>
+                      <td className="px-3 py-2 text-[#2B2A26] whitespace-nowrap">
+                        {next ? `${formatDate(isoDateKey(next))} (${inDays(next)})` : "–"}
+                      </td>
+                      <td className="px-3 py-2 text-[#2B2A26] whitespace-nowrap">{dateOrDash(a.lastInseminationDate)}</td>
+                      <td className="px-3 py-2 text-[#2B2A26] whitespace-nowrap">{statusOf(a)}</td>
+                      <td className="px-3 py-2 text-[#2B2A26] whitespace-nowrap">
+                        {a.expectedCalvingDate ? `${dateOrDash(a.expectedCalvingDate)} (${inDays(a.expectedCalvingDate)})` : a.pregnancyConfirmed ? "unbekannt" : "–"}
+                      </td>
+                      <td className="px-2 py-2 text-[#B0A98F]">
+                        <ChevronRight size={16} />
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
         ) : (
           <div className="flex flex-col gap-2">
             {filtered.map((a) => (
