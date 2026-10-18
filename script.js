@@ -1312,7 +1312,7 @@ function AnimalPass({ animal, allAnimals, onEdit, onClose, onOpenAnimal, onShowA
               </h3>
               <div className="rounded-xl border bg-white px-3 py-1" style={{ borderColor: PASS_BLUE }}>
                 <InfoRow label="Ohrmarke" value={formatEarTag(animal.earTag) || "ausstehend"} />
-                <InfoRow label="Name" value={animal.name || "Unbenannt"} />
+                <InfoRow label="Name" value={animal.name || "–"} />
                 <InfoRow label="Rasse" value={animal.breed ? `${animal.breed}${animal.breedCode ? ` (${animal.breedCode})` : ""}` : "–"} />
                 <InfoRow label="Geschlecht" value={genderLabel(animal.gender)} />
                 <InfoRow label="Geburtsdatum" value={formatDate(animal.birthDate)} />
@@ -1749,7 +1749,7 @@ function PendingTagCallout({ calves, onOpenAnimal }) {
             className="flex items-center justify-between gap-2 rounded-lg bg-[#F9EFE4] hover:bg-[#F3E3C0] px-2.5 py-1.5 text-left transition"
           >
             <span className="min-w-0 truncate text-sm font-medium text-[#2B2A26]">
-              {c.name || "Unbenannt"}
+              {c.name || "–"}
             </span>
             <span className="text-xs text-[#8A8672] shrink-0">{formatAgeShort(c.birthDate)}</span>
           </button>
@@ -1837,7 +1837,7 @@ function SectionTable({ title, color, animals, onOpenAnimal, showParents, showGe
                   className="border-t border-[#F9EFE4] cursor-pointer bg-white hover:bg-[#F9EFE4] transition"
                 >
                   <td className="px-3 py-2 text-[#2B2A26] font-medium truncate max-w-[110px]">
-                    {a.name || "Unbenannt"}
+                    {a.name || "–"}
                   </td>
                   <td className="px-3 py-2 text-[#2B2A26]">{formatEarTag(a.earTag) || "ausstehend"}</td>
                   {showAbgangsDatum && <td className="px-3 py-2 text-[#2B2A26]">{a.abgangsDatum ? formatDate(a.abgangsDatum) : "–"}</td>}
@@ -2839,7 +2839,7 @@ function DayAnimalsPicker({ dateLabel, animals, onSelect, onCancel }) {
                 />
                 <span className="min-w-0 flex-1">
                   <span className="block text-sm font-semibold text-[#2B2A26] truncate">
-                    {a.name || "Unbenannt"}
+                    {a.name || "–"}
                   </span>
                   <span className="block text-xs text-[#8A8672]">
                     {formatEarTag(a.earTag) || "ausstehend"} · {a.category}
