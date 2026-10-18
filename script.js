@@ -4602,9 +4602,15 @@ function BrunstVorschauCard({ animals, onOpenAnimal, onUpdateAnimal, addHistoryE
 }
 
 function BrunstlisteView({ animals, onOpenAnimal, onUpdateAnimal, addHistoryEvent, onOpenHistory, onBack, onOpenAddCalf }) {
+  const isAdmin = useContext(AppModeContext) === "admin";
   const [breedingSortBy, setBreedingSortBy] = useState("naechste-brunst");
   const [breedingSearch, setBreedingSearch] = useState("");
+  const [reiter, setReiter] = useState("gesamt"); // gesamt | schwanger | besamt | kalender
+  const [addOpen, setAddOpen] = useState(false);
+  const [addAnimalId, setAddAnimalId] = useState(null);
   const mobileScroll = useContext(MobileScrollContext);
+  const cowStats = useContext(CowStatsContext);
+  const bulls = useContext(BullsContext);
   // Ansicht: Karten (mit Eintragen-Knöpfen) oder Tabelle; Wahl wird pro Gerät gemerkt
   const [ansicht, setAnsichtRaw] = useState(() => {
     try {
@@ -4619,6 +4625,20 @@ function BrunstlisteView({ animals, onOpenAnimal, onUpdateAnimal, addHistoryEven
       localStorage.setItem("cattle:brunstlisteAnsicht", v);
     } catch (e) {}
   };
+
+  // Brunstkalender (21-Tage-Raster) – startet mit dem heutigen Zyklus in der Mitte
+  const todayRef = useMemo(() => new Date(), []);
+  const [kalStart, setKalStart] = useState(() => {
+    const now = new Date();
+    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const allCols = buildBrunstColumnsRange(today);
+    const idx = allCols.findIndex((col) => today >= col[0] && today <= col[20]);
+    const maxStart = Math.max(0, allCols.length - BRUNST_COLS_VISIBLE);
+    const centered = (idx >= 0 ? idx : 0) - Math.floor(BRUNST_COLS_VISIBLE / 2);
+    return Math.min(Math.max(centered, 0), maxStart);
+  });
+  const [kalDay, setKalDay] = useState(() => isoDateKey(new Date()));
+
   const todayMid = new Date();
   todayMid.setHours(0, 0, 0, 0);
   const dateOrDash = (d) => (d ? formatDate(d) : "–");
@@ -4628,7 +4648,6 @@ function BrunstlisteView({ animals, onOpenAnimal, onUpdateAnimal, addHistoryEven
     if (n === 0) return "heute";
     return n > 0 ? `in ${n} T` : `vor ${-n} T`;
   };
-  const bulls = useContext(BullsContext);
   const fatherCell = (a) => {
     const f = calfFather(a, bulls);
     if (!f) return "–";
@@ -4637,6 +4656,31 @@ function BrunstlisteView({ animals, onOpenAnimal, onUpdateAnimal, addHistoryEven
   };
   const statusOf = (a) =>
     a.pregnancyConfirmed ? "trächtig" : a.expectedCalvingDate ? "vermutet trächtig" : "offen";
+
+  // Reiter-Filter
+  const isSchwanger = (a) => !!(a.pregnancyConfirmed || a.expectedCalvingDate);
+  const isBesamt = (a) => {
+    if (!a.lastInseminationDate || isSchwanger(a)) return false;
+    const lastCalving = cowStats[cleanEarTag(a.earTag)]?.lastCalving || "";
+    return a.lastInseminationDate > lastCalving;
+  };
+  const onDay = (a, dISO) => {
+    const next = a.lastHeatDate ? isoDateKey(nextExpectedHeat(a)) : null;
+    const conf = pregnancyConfirmedDate(a);
+    return (
+      next === dISO ||
+      a.lastInseminationDate === dISO ||
+      a.expectedCalvingDate === dISO ||
+      a.lastMissedHeatDate === dISO ||
+      (conf && isoDateKey(conf) === dISO) ||
+      (Array.isArray(a.history) && a.history.some((ev) => ev.date === dISO && ev.type !== "umgestallt" && ev.type !== "stall_umgestallt"))
+    );
+  };
+  const counts = {
+    gesamt: animals.length,
+    schwanger: animals.filter(isSchwanger).length,
+    besamt: animals.filter(isBesamt).length,
+  };
 
   const sorted = animals.slice().sort((a, b) => {
     let av, bv;
@@ -4662,149 +4706,267 @@ function BrunstlisteView({ animals, onOpenAnimal, onUpdateAnimal, addHistoryEven
     return 0;
   });
   const searchTerm = breedingSearch.trim().toLowerCase();
-  const filtered = searchTerm
-    ? sorted.filter((a) => {
-        const tag = cleanEarTag(a.earTag || "").toLowerCase();
-        const name = (a.name || "").toLowerCase();
-        return tag.includes(searchTerm.replace(/\s/g, "")) || name.includes(searchTerm);
-      })
-    : sorted;
+  const filtered = sorted.filter((a) => {
+    if (reiter === "schwanger" && !isSchwanger(a)) return false;
+    if (reiter === "besamt" && !isBesamt(a)) return false;
+    if (reiter === "kalender" && !onDay(a, kalDay)) return false;
+    if (!searchTerm) return true;
+    const tag = cleanEarTag(a.earTag || "").toLowerCase();
+    const name = (a.name || "").toLowerCase();
+    return tag.includes(searchTerm.replace(/\s/g, "")) || name.includes(searchTerm);
+  });
+
+  const tileStyle = (active) => (active ? { boxShadow: "0 0 0 2px #2B2A26 inset" } : undefined);
+  const Tile = ({ id, label, value }) => (
+    <button
+      type="button"
+      onClick={() => setReiter(id)}
+      className="h-[68px] bg-white text-[#2B2A26] border border-[#D9CFB8] rounded-lg px-1 py-2 flex flex-col items-center justify-center text-center transition overflow-hidden"
+      style={tileStyle(reiter === id)}
+    >
+      <p className="text-[10px] uppercase tracking-wide text-[#6B6858] truncate w-full">{label}</p>
+      {value}
+    </button>
+  );
+  const number = (n) => (
+    <p className="font-slab font-bold" style={{ fontSize: "20px", lineHeight: "1.2", fontVariantNumeric: "tabular-nums", fontFamily: "'Arvo', serif" }}>
+      {n}
+    </p>
+  );
+  const calendarGlyph = (
+    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <rect x="3" y="4" width="18" height="18" rx="2" />
+      <line x1="16" y1="2" x2="16" y2="6" />
+      <line x1="8" y1="2" x2="8" y2="6" />
+      <line x1="3" y1="10" x2="21" y2="10" />
+    </svg>
+  );
+
+  const renderTable = (list) => (
+    <div className="rounded-xl border border-[#D9CFB8] bg-white overflow-x-auto">
+      <table className="w-full text-[13px]" style={{ borderCollapse: "separate", borderSpacing: 0, minWidth: 800 }}>
+        <thead>
+          <tr className="bg-white text-[#6B6858] text-[11px] uppercase tracking-wide">
+            <th className="text-left font-semibold px-3 py-2">Name</th>
+            <th className="text-left font-semibold px-3 py-2">Ohrmarke</th>
+            <th className="text-left font-semibold px-3 py-2">Abschnitt</th>
+            <th className="text-left font-semibold px-3 py-2">Letzte Brunst</th>
+            <th className="text-left font-semibold px-3 py-2">Nächste Brunst</th>
+            <th className="text-left font-semibold px-3 py-2">Letzte Besamung</th>
+            <th className="text-left font-semibold px-3 py-2">Status</th>
+            <th className="text-left font-semibold px-3 py-2">Vater (Kalb)</th>
+            <th className="text-left font-semibold px-3 py-2">Erw. Kalbung</th>
+            <th className="w-6 px-2 py-2"></th>
+          </tr>
+        </thead>
+        <tbody>
+          {list.map((a) => {
+            const next = a.pregnancyConfirmed ? null : nextExpectedHeat(a);
+            return (
+              <tr key={a.id} onClick={() => onOpenHistory(a)} className="border-t border-[#F9EFE4] cursor-pointer bg-white hover:bg-[#F9EFE4] transition">
+                <td className="px-3 py-2 text-[#2B2A26] font-medium truncate max-w-[110px]">{a.name || "–"}</td>
+                <td className="px-3 py-2 text-[#2B2A26] whitespace-nowrap">{formatEarTag(a.earTag) || "ausstehend"}</td>
+                <td className="px-3 py-2 text-[#2B2A26]">{CATEGORY_SINGULAR[a.category] || a.category}</td>
+                <td className="px-3 py-2 text-[#2B2A26] whitespace-nowrap">{dateOrDash(a.lastHeatDate)}</td>
+                <td className="px-3 py-2 text-[#2B2A26] whitespace-nowrap">{next ? `${formatDate(isoDateKey(next))} (${inDays(next)})` : "–"}</td>
+                <td className="px-3 py-2 text-[#2B2A26] whitespace-nowrap">{dateOrDash(a.lastInseminationDate)}</td>
+                <td className="px-3 py-2 text-[#2B2A26] whitespace-nowrap">{statusOf(a)}</td>
+                <td className="px-3 py-2 text-[#2B2A26] whitespace-nowrap">{fatherCell(a)}</td>
+                <td className="px-3 py-2 text-[#2B2A26] whitespace-nowrap">
+                  {a.expectedCalvingDate ? `${dateOrDash(a.expectedCalvingDate)} (${inDays(a.expectedCalvingDate)})` : a.pregnancyConfirmed ? "unbekannt" : "–"}
+                </td>
+                <td className="px-2 py-2 text-[#B0A98F]">
+                  <ChevronRight size={16} />
+                </td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+    </div>
+  );
+  const renderCards = (list) => (
+    <div className="flex flex-col gap-2">
+      {list.map((a) => (
+        <BreedingRow
+          key={a.id}
+          animal={a}
+          onOpenAnimal={onOpenAnimal}
+          onUpdateAnimal={onUpdateAnimal}
+          addHistoryEvent={addHistoryEvent}
+          onOpenHistory={onOpenHistory}
+          onOpenAddCalf={onOpenAddCalf}
+        />
+      ))}
+    </div>
+  );
+  const emptyText =
+    searchTerm
+      ? "Kein Tier gefunden."
+      : reiter === "schwanger"
+      ? "Keine trächtigen Tiere."
+      : reiter === "besamt"
+      ? "Keine besamten Tiere seit der letzten Kalbung."
+      : reiter === "kalender"
+      ? "An diesem Tag ist nichts eingetragen oder erwartet."
+      : "Noch keine Mutterkühe oder Jungrinder erfasst.";
+  const addAnimal = addAnimalId ? animals.find((a) => a.id === addAnimalId) : null;
 
   return (
     <div className="fixed inset-0 z-30 overflow-y-auto" style={{ backgroundColor: "#F9EFE4" }}>
-      <div
-        className="sticky top-0 z-10 backdrop-blur border-b border-[#D9CFB8] px-5 pt-6 pb-4 flex items-center justify-between gap-3"
-        style={{ backgroundColor: "rgba(249, 239, 228, 0.95)" }}
-      >
-        <div className="min-w-0">
-          <p className="text-xs uppercase tracking-wide text-[#8A8672]">Übersicht</p>
-          <h1 className="font-slab text-lg font-bold text-[#2B2A26] truncate">Brunstliste</h1>
+      <header className="border-b border-[#D9CFB8] px-5 pt-6 pb-4" style={{ backgroundColor: "#F9EFE4" }}>
+        <p className="text-xs uppercase tracking-[0.2em] text-[#6B6858] mb-1">Übersicht</p>
+        <h1 className="font-slab text-2xl font-bold text-[#2B2A26]">Brunstliste</h1>
+
+        <div className="grid grid-cols-4 gap-2 mt-4">
+          <Tile id="gesamt" label="Gesamt" value={number(counts.gesamt)} />
+          <Tile id="schwanger" label="Schwanger" value={number(counts.schwanger)} />
+          <Tile id="besamt" label="Besamt" value={number(counts.besamt)} />
+          <Tile id="kalender" label="Brunstkalender" value={<span className="mt-1 text-[#2B2A26]">{calendarGlyph}</span>} />
         </div>
-        <button
-          type="button"
-          onClick={() => {
-            setBreedingSearch("");
-            onBack();
-          }}
-          className="shrink-0 text-xs font-semibold rounded-lg px-3 py-1.5 transition"
-          style={{ color: "#FFFFFF", backgroundColor: "#2B2A26" }}
-        >
-          Zurück
-        </button>
-      </div>
-      <div className="px-5 py-4 pb-10">
-        <p className="text-xs mb-3" style={{ color: "#8A8672" }}>
-          Letzte Brunst je Tier eintragen/ändern.
-        </p>
+
         <input
           type="text"
           value={breedingSearch}
           onChange={(e) => setBreedingSearch(e.target.value)}
-          placeholder="Suche nach Ohrmarke oder Name..."
-          className="w-full mb-3 px-3 py-2 rounded-lg border text-sm"
-          style={{ borderColor: "#D9CFB8" }}
+          placeholder="Suche nach Ohrmarke oder Name…"
+          className="w-full mt-4 px-3 py-2 rounded-lg border border-[#D9CFB8] bg-white text-[#2B2A26] text-sm focus:outline-none focus:ring-2 focus:ring-[#4C6B3F]"
         />
-        <div className="flex items-center gap-2 mb-4 flex-wrap">
-          <div className="flex rounded-full border border-[#D9CFB8] bg-white p-0.5 gap-0.5 text-[11px]">
-            {[
-              ["karten", "Karten"],
-              ["tabelle", "Tabelle"],
-            ].map(([key, label]) => (
-              <button
-                key={key}
-                type="button"
-                onClick={() => setAnsicht(key)}
-                className="rounded-full px-2.5 py-1 font-semibold"
-                style={ansicht === key ? { backgroundColor: "#2B2A26", color: "#F2EBDD" } : { color: "#6B6858" }}
-              >
-                {label}
-              </button>
-            ))}
-          </div>
-          <label className="text-xs" style={{ color: "#6B6858" }}>
-            Sortieren nach:
-          </label>
+
+        <div className="flex items-center justify-between gap-2 mt-3 flex-wrap">
           <select
             value={breedingSortBy}
             onChange={(e) => setBreedingSortBy(e.target.value)}
-            className="text-xs px-2 py-1.5 rounded-lg border"
+            className="text-xs px-2 py-1.5 rounded-lg border bg-white"
             style={{ borderColor: "#D9CFB8" }}
+            aria-label="Sortieren nach"
           >
-            <option value="letzte-brunst">Letzte Brunst</option>
-            <option value="naechste-brunst">Nächste erwartete Brunst</option>
-            <option value="erwartetes-kalb">Erwartetes Kalb</option>
-            <option value="besamung">Besamung</option>
-            <option value="traechtigkeit">Bestätigte Trächtigkeit</option>
+            <option value="letzte-brunst">Sortieren: Letzte Brunst</option>
+            <option value="naechste-brunst">Sortieren: Nächste erwartete Brunst</option>
+            <option value="erwartetes-kalb">Sortieren: Erwartetes Kalb</option>
+            <option value="besamung">Sortieren: Besamung</option>
+            <option value="traechtigkeit">Sortieren: Bestätigte Trächtigkeit</option>
           </select>
-        </div>
-        {filtered.length === 0 ? (
-          <p className="text-sm text-center py-6" style={{ color: "#B0A98F" }}>
-            {searchTerm ? "Kein Tier gefunden." : "Noch keine Mutterkühe oder Jungrinder erfasst."}
-          </p>
-        ) : ansicht === "tabelle" ? (
-          <div className={`rounded-xl border border-[#D9CFB8] bg-white ${mobileScroll ? "overflow-x-auto" : "overflow-x-auto"}`}>
-            <table className="w-full text-[13px]" style={{ borderCollapse: "separate", borderSpacing: 0, minWidth: 800 }}>
-              <thead>
-                <tr className="bg-white text-[#6B6858] text-[11px] uppercase tracking-wide">
-                  <th className="text-left font-semibold px-3 py-2">Name</th>
-                  <th className="text-left font-semibold px-3 py-2">Ohrmarke</th>
-                  <th className="text-left font-semibold px-3 py-2">Abschnitt</th>
-                  <th className="text-left font-semibold px-3 py-2">Letzte Brunst</th>
-                  <th className="text-left font-semibold px-3 py-2">Nächste Brunst</th>
-                  <th className="text-left font-semibold px-3 py-2">Letzte Besamung</th>
-                  <th className="text-left font-semibold px-3 py-2">Status</th>
-                  <th className="text-left font-semibold px-3 py-2">Vater (Kalb)</th>
-                  <th className="text-left font-semibold px-3 py-2">Erw. Kalbung</th>
-                  <th className="w-6 px-2 py-2"></th>
-                </tr>
-              </thead>
-              <tbody>
-                {filtered.map((a) => {
-                  const next = a.pregnancyConfirmed ? null : nextExpectedHeat(a);
-                  return (
-                    <tr
-                      key={a.id}
-                      onClick={() => onOpenHistory(a)}
-                      className="border-t border-[#F9EFE4] cursor-pointer bg-white hover:bg-[#F9EFE4] transition"
-                    >
-                      <td className="px-3 py-2 text-[#2B2A26] font-medium truncate max-w-[110px]">{a.name || "–"}</td>
-                      <td className="px-3 py-2 text-[#2B2A26] whitespace-nowrap">{formatEarTag(a.earTag) || "ausstehend"}</td>
-                      <td className="px-3 py-2 text-[#2B2A26]">{CATEGORY_SINGULAR[a.category] || a.category}</td>
-                      <td className="px-3 py-2 text-[#2B2A26] whitespace-nowrap">{dateOrDash(a.lastHeatDate)}</td>
-                      <td className="px-3 py-2 text-[#2B2A26] whitespace-nowrap">
-                        {next ? `${formatDate(isoDateKey(next))} (${inDays(next)})` : "–"}
-                      </td>
-                      <td className="px-3 py-2 text-[#2B2A26] whitespace-nowrap">{dateOrDash(a.lastInseminationDate)}</td>
-                      <td className="px-3 py-2 text-[#2B2A26] whitespace-nowrap">{statusOf(a)}</td>
-                      <td className="px-3 py-2 text-[#2B2A26] whitespace-nowrap">{fatherCell(a)}</td>
-                      <td className="px-3 py-2 text-[#2B2A26] whitespace-nowrap">
-                        {a.expectedCalvingDate ? `${dateOrDash(a.expectedCalvingDate)} (${inDays(a.expectedCalvingDate)})` : a.pregnancyConfirmed ? "unbekannt" : "–"}
-                      </td>
-                      <td className="px-2 py-2 text-[#B0A98F]">
-                        <ChevronRight size={16} />
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
+          <div className="flex items-center gap-2 shrink-0 flex-wrap">
+            <div className="flex rounded-full border border-[#D9CFB8] bg-white p-0.5 gap-0.5 text-[11px]">
+              {[
+                ["karten", "Karten"],
+                ["tabelle", "Tabelle"],
+              ].map(([key, label]) => (
+                <button
+                  key={key}
+                  type="button"
+                  onClick={() => setAnsicht(key)}
+                  className="rounded-full px-2.5 py-1 font-semibold"
+                  style={ansicht === key ? { backgroundColor: "#2B2A26", color: "#F2EBDD" } : { color: "#6B6858" }}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+            {isAdmin && (
+              <button
+                type="button"
+                onClick={() => {
+                  setAddAnimalId(null);
+                  setAddOpen(true);
+                }}
+                className="p-1.5 rounded-lg bg-white border border-[#D9CFB8] text-[#2B2A26]"
+                aria-label="Brunst, Besamung oder Trächtigkeit eintragen"
+              >
+                <Plus size={16} />
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={() => {
+                setBreedingSearch("");
+                onBack();
+              }}
+              className="text-xs font-semibold rounded-lg px-3 py-1.5 transition whitespace-nowrap"
+              style={{ color: "#FFFFFF", backgroundColor: "#2B2A26", border: "1px solid #2B2A26" }}
+            >
+              Zurück
+            </button>
           </div>
-        ) : (
-          <div className="flex flex-col gap-2">
-            {filtered.map((a) => (
-              <BreedingRow
-                key={a.id}
-                animal={a}
-                onOpenAnimal={onOpenAnimal}
-                onUpdateAnimal={onUpdateAnimal}
-                addHistoryEvent={addHistoryEvent}
-                onOpenHistory={onOpenHistory}
-                onOpenAddCalf={onOpenAddCalf}
-              />
-            ))}
+        </div>
+      </header>
+
+      <div className="px-5 py-4 pb-10">
+        {reiter === "kalender" && (
+          <div className="mb-4">
+            <BrunftYearGrid
+              animals={animals}
+              today={todayRef}
+              colStart={kalStart}
+              setColStart={setKalStart}
+              onOpenDay={(date) => setKalDay(isoDateKey(date))}
+            />
+            <h2 className="font-slab text-sm font-bold text-[#2B2A26] uppercase tracking-wide mt-3">
+              {kalDay === isoDateKey(new Date()) ? "Heute" : formatDate(kalDay)} · {filtered.length} {filtered.length === 1 ? "Tier" : "Tiere"}
+            </h2>
+            <p className="text-xs text-[#8A8672]">Tippe im Kalender auf einen Tag, um die Tiere dieses Tages zu sehen.</p>
           </div>
         )}
+        {filtered.length === 0 ? (
+          <p className="text-sm text-center py-6" style={{ color: "#B0A98F" }}>
+            {emptyText}
+          </p>
+        ) : ansicht === "tabelle" ? (
+          renderTable(filtered)
+        ) : (
+          renderCards(filtered)
+        )}
       </div>
+
+      {addOpen && (
+        <div
+          className="fixed inset-0 z-40 flex items-end sm:items-center justify-center"
+          style={{ position: "fixed", top: 0, right: 0, bottom: 0, left: 0, backgroundColor: "rgba(0,0,0,0.4)" }}
+          onClick={() => setAddOpen(false)}
+        >
+          <div onClick={(e) => e.stopPropagation()} className="w-full sm:max-w-lg bg-white rounded-t-2xl sm:rounded-2xl border border-[#D9CFB8] p-5 pb-6 max-h-[85vh] overflow-y-auto">
+            <div className="flex items-center justify-between mb-3">
+              <h2 className="font-slab text-lg font-bold text-[#2B2A26]">Eintragen</h2>
+              <button type="button" onClick={() => setAddOpen(false)} className="p-1 text-[#8A8672] hover:text-[#2B2A26]" aria-label="Schließen">
+                <X size={20} />
+              </button>
+            </div>
+            <label className="block text-xs font-semibold uppercase tracking-wide text-[#6B6858] mb-1">Tier</label>
+            <EarTagSearchSelect
+              value={addAnimal ? addAnimal.earTag : ""}
+              onChange={(earTag) => {
+                const found = animals.find((a) => sameEarTag(a.earTag, earTag));
+                setAddAnimalId(found ? found.id : null);
+              }}
+              options={animals}
+              placeholder="Ohrmarke oder Namen suchen…"
+              emptyLabel="Bitte wählen…"
+            />
+            {addAnimal && (
+              <div className="mt-3">
+                <BreedingRow
+                  key={addAnimal.id}
+                  animal={addAnimal}
+                  onOpenAnimal={onOpenAnimal}
+                  onUpdateAnimal={onUpdateAnimal}
+                  addHistoryEvent={addHistoryEvent}
+                  onOpenHistory={onOpenHistory}
+                  onOpenAddCalf={onOpenAddCalf}
+                />
+              </div>
+            )}
+            <button
+              type="button"
+              onClick={() => setAddOpen(false)}
+              className="w-full mt-4 py-2.5 rounded-lg font-semibold"
+              style={{ backgroundColor: "#2B2A26", color: "#FFFFFF" }}
+            >
+              Fertig
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
