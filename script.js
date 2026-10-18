@@ -4930,7 +4930,9 @@ function BrunstlisteView({ animals, onOpenAnimal, onUpdateAnimal, addHistoryEven
         />
 
         <div className="flex items-center justify-between gap-2 mt-3 flex-wrap">
-          {ansicht === "tabelle" ? (
+          {reiter === "kalender" ? (
+            <span />
+          ) : ansicht === "tabelle" ? (
             <p className="text-[11px] text-[#8A8672]">Zum Sortieren auf eine Spaltenüberschrift tippen</p>
           ) : (
           <select
@@ -4948,6 +4950,7 @@ function BrunstlisteView({ animals, onOpenAnimal, onUpdateAnimal, addHistoryEven
           </select>
           )}
           <div className="flex items-center gap-2 shrink-0 flex-wrap">
+            {reiter !== "kalender" && (
             <div className="flex rounded-full border border-[#D9CFB8] bg-white p-0.5 gap-0.5 text-[11px]">
               {[
                 ["karten", "Karten"],
@@ -4964,6 +4967,7 @@ function BrunstlisteView({ animals, onOpenAnimal, onUpdateAnimal, addHistoryEven
                 </button>
               ))}
             </div>
+            )}
             {isAdmin && (
               <button
                 type="button"
@@ -5014,7 +5018,7 @@ function BrunstlisteView({ animals, onOpenAnimal, onUpdateAnimal, addHistoryEven
           <p className="text-sm text-center py-6" style={{ color: "#B0A98F" }}>
             {emptyText}
           </p>
-        ) : ansicht === "tabelle" ? (
+        ) : ansicht === "tabelle" || reiter === "kalender" ? (
           renderTable(tableSorted)
         ) : (
           renderCards(filtered)
@@ -5022,53 +5026,175 @@ function BrunstlisteView({ animals, onOpenAnimal, onUpdateAnimal, addHistoryEven
       </div>
 
       {addOpen && (
-        <div
-          className="fixed inset-0 z-40 flex items-end sm:items-center justify-center"
-          style={{ position: "fixed", top: 0, right: 0, bottom: 0, left: 0, backgroundColor: "rgba(0,0,0,0.4)" }}
-          onClick={() => setAddOpen(false)}
-        >
-          <div onClick={(e) => e.stopPropagation()} className="w-full sm:max-w-lg bg-white rounded-t-2xl sm:rounded-2xl border border-[#D9CFB8] p-5 pb-6 max-h-[85vh] overflow-y-auto">
-            <div className="flex items-center justify-between mb-3">
-              <h2 className="font-slab text-lg font-bold text-[#2B2A26]">Eintragen</h2>
-              <button type="button" onClick={() => setAddOpen(false)} className="p-1 text-[#8A8672] hover:text-[#2B2A26]" aria-label="Schließen">
-                <X size={20} />
+        <BrunstEintragDialog
+          animals={animals}
+          onUpdateAnimal={onUpdateAnimal}
+          onOpenAddCalf={onOpenAddCalf}
+          onClose={() => setAddOpen(false)}
+        />
+      )}
+    </div>
+  );
+}
+
+
+// Plus in der Brunstliste: 1. Art wählen, 2. Tier wählen, 3. Daten eingeben
+const BRUNST_EINTRAG_ARTEN = [
+  { id: "brunst", label: "Brunst", dateLabel: "Datum der Brunst" },
+  { id: "besamung", label: "Besamung", dateLabel: "Datum der Besamung" },
+  { id: "traechtigkeit", label: "Trächtigkeit", dateLabel: "Bestätigt am" },
+  { id: "geburt", label: "Geburt", dateLabel: "Datum der Geburt" },
+];
+
+function BrunstEintragDialog({ animals, onUpdateAnimal, onOpenAddCalf, onClose }) {
+  const bulls = useContext(BullsContext);
+  const todayISO = isoDateKey(new Date());
+  const [art, setArt] = useState(null);
+  const [animalId, setAnimalId] = useState(null);
+  const [date, setDate] = useState(todayISO);
+  const [bull, setBull] = useState(bulls.length === 1 ? bulls[0].earTag : "");
+  const [done, setDone] = useState("");
+  const artInfo = BRUNST_EINTRAG_ARTEN.find((x) => x.id === art);
+  const options = art === "traechtigkeit" ? animals.filter((a) => !a.pregnancyConfirmed) : animals;
+  const animal = animalId ? animals.find((a) => a.id === animalId) : null;
+
+  const save = () => {
+    if (!animal || !date) return;
+    const history = Array.isArray(animal.history) ? animal.history : [];
+    const label = formatEarTag(animal.earTag) || "Tier";
+    if (art === "brunst") {
+      onUpdateAnimal(animal.id, {
+        lastHeatDate: date,
+        lastMissedHeatDate: "",
+        expectedCalvingDate: "",
+        pregnancyConfirmed: false,
+        pregnancyDirect: false,
+        history: [...history, { type: "brunst", date }],
+      });
+    } else if (art === "besamung") {
+      onUpdateAnimal(animal.id, {
+        lastInseminationDate: date,
+        lastInseminationBull: bull || "",
+        history: [...history, { type: "besamung", date, ...(bull ? { bull } : {}) }],
+      });
+    } else if (art === "traechtigkeit") {
+      if (animal.expectedCalvingDate) {
+        // vermutete Trächtigkeit (nach ausgefallener Brunst) bestätigen
+        onUpdateAnimal(animal.id, { pregnancyConfirmed: true, history: [...history, { type: "schwangerschaft_bestaetigt", date }] });
+      } else {
+        onUpdateAnimal(animal.id, {
+          lastMissedHeatDate: date,
+          expectedCalvingDate: "",
+          pregnancyConfirmed: true,
+          pregnancyDirect: true,
+          history: [...history, { type: "schwangerschaft_direkt", date }],
+        });
+      }
+    } else if (art === "geburt") {
+      const wasPregnant = !!animal.lastMissedHeatDate || !!animal.pregnancyConfirmed;
+      onUpdateAnimal(animal.id, {
+        lastMissedHeatDate: "",
+        expectedCalvingDate: "",
+        pregnancyConfirmed: false,
+        pregnancyDirect: false,
+        lastHeatDate: "",
+        history: [...history, ...(wasPregnant ? [{ type: "schwangerschaft_beendet", date }] : []), { type: "geburt", date }],
+      });
+      onClose();
+      if (onOpenAddCalf) onOpenAddCalf(animal);
+      return;
+    }
+    setDone(`${artInfo.label} für ${label} gespeichert.`);
+    setAnimalId(null);
+  };
+
+  const stepBtn = "rounded-lg px-3 py-4 text-sm font-semibold border border-[#D9CFB8] bg-white text-[#2B2A26] hover:bg-[#F9EFE4] transition";
+  return (
+    <div
+      className="fixed inset-0 z-40 flex items-end sm:items-center justify-center"
+      style={{ position: "fixed", top: 0, right: 0, bottom: 0, left: 0, backgroundColor: "rgba(0,0,0,0.4)" }}
+      onClick={onClose}
+    >
+      <div onClick={(e) => e.stopPropagation()} className="w-full sm:max-w-sm bg-white rounded-t-2xl sm:rounded-2xl border border-[#D9CFB8] p-5 pb-6 max-h-[85vh] overflow-y-auto">
+        <div className="flex items-center justify-between mb-3">
+          <h2 className="font-slab text-lg font-bold text-[#2B2A26]">{artInfo ? `${artInfo.label} eintragen` : "Was möchtest du eintragen?"}</h2>
+          <button type="button" onClick={onClose} className="p-1 text-[#8A8672] hover:text-[#2B2A26]" aria-label="Schließen">
+            <X size={20} />
+          </button>
+        </div>
+
+        {!artInfo ? (
+          <div className="grid grid-cols-2 gap-2">
+            {BRUNST_EINTRAG_ARTEN.map((x) => (
+              <button key={x.id} type="button" className={stepBtn} onClick={() => { setArt(x.id); setDone(""); }}>
+                {x.label}
               </button>
-            </div>
-            <label className="block text-xs font-semibold uppercase tracking-wide text-[#6B6858] mb-1">Tier</label>
+            ))}
+          </div>
+        ) : (
+          <>
+            {done && <p className="text-sm text-[#4C6B3F] mb-3">{done} Du kannst gleich das nächste Tier eintragen.</p>}
+            <label className="block text-xs font-semibold uppercase tracking-wide text-[#6B6858] mb-1">Ohrmarke</label>
             <EarTagSearchSelect
-              value={addAnimal ? addAnimal.earTag : ""}
+              key={`${art}-${done}`}
+              value={animal ? animal.earTag : ""}
               onChange={(earTag) => {
-                const found = animals.find((a) => sameEarTag(a.earTag, earTag));
-                setAddAnimalId(found ? found.id : null);
+                const found = options.find((a) => sameEarTag(a.earTag, earTag));
+                setAnimalId(found ? found.id : null);
+                setDone("");
               }}
-              options={animals}
+              options={options}
               placeholder="Ohrmarke oder Namen suchen…"
               emptyLabel="Bitte wählen…"
             />
-            {addAnimal && (
-              <div className="mt-3">
-                <BreedingRow
-                  key={addAnimal.id}
-                  animal={addAnimal}
-                  onOpenAnimal={onOpenAnimal}
-                  onUpdateAnimal={onUpdateAnimal}
-                  addHistoryEvent={addHistoryEvent}
-                  onOpenHistory={onOpenHistory}
-                  onOpenAddCalf={onOpenAddCalf}
-                />
-              </div>
+            {animal && art === "traechtigkeit" && animal.expectedCalvingDate && (
+              <p className="text-xs text-[#8A8672] mt-1">Vermutete Trächtigkeit wird bestätigt (erwartetes Kalben {formatDate(animal.expectedCalvingDate)}).</p>
             )}
+            <label className="block text-xs font-semibold uppercase tracking-wide text-[#6B6858] mb-1 mt-3">{artInfo.dateLabel}</label>
+            <input
+              type="date"
+              value={date}
+              max={todayISO}
+              onChange={(e) => setDate(e.target.value)}
+              className="w-full mb-3 px-3 py-2 rounded-lg border bg-white text-[#2B2A26] text-sm"
+              style={{ borderColor: "#9CA3AF" }}
+            />
+            {art === "besamung" && (
+              <>
+                <label className="block text-xs font-semibold uppercase tracking-wide text-[#6B6858] mb-1">Bulle</label>
+                <select
+                  value={bull}
+                  onChange={(e) => setBull(e.target.value)}
+                  className="w-full mb-3 px-3 py-2 rounded-lg border bg-white text-[#2B2A26] text-sm"
+                  style={{ borderColor: "#9CA3AF" }}
+                  aria-label="Bulle"
+                >
+                  <option value="">Bulle unbekannt</option>
+                  {bulls.map((b) => (
+                    <option key={b.id} value={b.earTag}>
+                      {formatEarTag(b.earTag)}
+                      {b.name ? ` · ${b.name}` : ""}
+                    </option>
+                  ))}
+                </select>
+              </>
+            )}
+            {art === "geburt" && <p className="text-xs text-[#8A8672] mb-3">Danach öffnet sich das Formular „Kalb hinzufügen“ mit der Mutter vorausgefüllt.</p>}
             <button
               type="button"
-              onClick={() => setAddOpen(false)}
-              className="w-full mt-4 py-2.5 rounded-lg font-semibold"
+              onClick={save}
+              disabled={!animal || !date}
+              className="w-full py-2.5 rounded-lg font-semibold disabled:opacity-40"
               style={{ backgroundColor: "#2B2A26", color: "#FFFFFF" }}
             >
-              Fertig
+              Speichern
             </button>
-          </div>
-        </div>
-      )}
+            <button type="button" onClick={() => { setArt(null); setAnimalId(null); setDone(""); }} className="w-full mt-2 text-xs text-[#6B6858] underline">
+              Andere Art wählen
+            </button>
+          </>
+        )}
+      </div>
     </div>
   );
 }
