@@ -2,7 +2,7 @@
 # Startet NUR per Hand: GitHub -> Actions -> "Echte App veröffentlichen" -> "Run workflow".
 # Benötigt einmalig:
 #   - Secret   FIREBASE_SERVICE_ACCOUNT  (Inhalt der JSON-Schlüsseldatei)
-#   - Variable FIREBASE_PROJECT_ID       (z. B. rinderbestand-a1b2c)
+#   (optional) Variable FIREBASE_PROJECT_ID – sonst wird die Projekt-ID aus dem Schlüssel genommen
 name: Echte App veröffentlichen
 
 on:
@@ -21,28 +21,33 @@ jobs:
       - name: Einstellungen prüfen
         env:
           SA: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
-          PID: ${{ vars.FIREBASE_PROJECT_ID }}
+          PID_VAR: ${{ vars.FIREBASE_PROJECT_ID }}
         run: |
           if [ -z "$SA" ]; then echo "::error::Das Secret FIREBASE_SERVICE_ACCOUNT fehlt oder ist leer."; exit 1; fi
-          if [ -z "$PID" ]; then echo "::error::Die Variable FIREBASE_PROJECT_ID fehlt oder ist leer (Settings -> Secrets and variables -> Actions -> Variables)."; exit 1; fi
           printf '%s' "$SA" > "$RUNNER_TEMP/sa.json"
-          python3 - "$RUNNER_TEMP/sa.json" "$PID" <<'PY'
-          import json, sys
+          python3 - "$RUNNER_TEMP/sa.json" "$PID_VAR" <<'PY'
+          import json, os, sys
           try:
               d = json.load(open(sys.argv[1]))
-          except Exception as e:
+          except Exception:
               print("::error::Das Secret FIREBASE_SERVICE_ACCOUNT ist kein gültiger JSON-Schlüssel (bitte den kompletten Dateiinhalt einfügen).")
               sys.exit(1)
-          key_project = d.get("project_id", "")
-          print(f"::notice::Schlüssel gehört zu Projekt '{key_project}', Dienstkonto {d.get('client_email', '?')}. Variable FIREBASE_PROJECT_ID = '{sys.argv[2]}'.")
-          if key_project and key_project != sys.argv[2].strip():
-              print(f"::error::Projekt-ID passt nicht: Variable '{sys.argv[2]}', Schlüssel '{key_project}'.")
+          key_project = (d.get("project_id") or "").strip()
+          var_project = (sys.argv[2] or "").strip()
+          project = var_project or key_project
+          if not project:
+              print("::error::Im Schlüssel steht keine Projekt-ID.")
               sys.exit(1)
+          if var_project and key_project and var_project != key_project:
+              print(f"::error::Projekt-ID passt nicht: Variable '{var_project}', Schlüssel '{key_project}'. Variable löschen oder korrigieren.")
+              sys.exit(1)
+          print(f"::notice::Veröffentliche in Firebase-Projekt '{project}' (Dienstkonto {d.get('client_email', '?')}).")
+          with open(os.environ["GITHUB_ENV"], "a") as f:
+              f.write(f"PID={project}\n")
           PY
 
       - name: Zu Firebase hochladen
         env:
-          PID: ${{ vars.FIREBASE_PROJECT_ID }}
           GOOGLE_APPLICATION_CREDENTIALS: ${{ runner.temp }}/sa.json
         run: |
           set -o pipefail
