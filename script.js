@@ -227,7 +227,7 @@ if ('serviceWorker' in navigator && (location.protocol === 'https:' || location.
 
 /* --- App --- */
 try {
-const { useState, useEffect, useMemo, useRef, createContext, useContext } = React;
+const { useState, useEffect, useMemo, useRef, useCallback, createContext, useContext } = React;
 
 // Eigenständige SVG-Icons als Ersatz für lucide-react (kein Bundler/npm nötig)
 function makeIcon(paths) {
@@ -1814,12 +1814,83 @@ function sortByAbgangsDatum(list) {
   });
 }
 
+// ===== Tabellen sortieren per Klick auf die Spaltenüberschrift =====
+// 1. Klick: aufsteigend, 2. Klick: absteigend, 3. Klick: wieder Standard-Reihenfolge.
+// Leere Werte stehen immer am Ende.
+function compareSortValues(va, vb) {
+  const ea = va === null || va === undefined || va === "";
+  const eb = vb === null || vb === undefined || vb === "";
+  if (ea && eb) return 0;
+  if (ea) return 1;
+  if (eb) return -1;
+  if (typeof va === "number" && typeof vb === "number") return va - vb;
+  return String(va).localeCompare(String(vb), "de", { numeric: true, sensitivity: "base" });
+}
+
+function useTableSort(list, getValue) {
+  const [sort, setSort] = useState(null); // { key, dir: 1 | -1 }
+  const sorted = useMemo(() => {
+    if (!sort) return list;
+    return list
+      .map((item, i) => ({ item, i, v: getValue(item, sort.key) }))
+      .sort((x, y) => {
+        const ea = x.v === null || x.v === undefined || x.v === "";
+        const eb = y.v === null || y.v === undefined || y.v === "";
+        if (ea !== eb) return ea ? 1 : -1;
+        return compareSortValues(x.v, y.v) * sort.dir || x.i - y.i;
+      })
+      .map((x) => x.item);
+  }, [list, sort, getValue]);
+  const toggle = (key) =>
+    setSort((cur) => (!cur || cur.key !== key ? { key, dir: 1 } : cur.dir === 1 ? { key, dir: -1 } : null));
+  const th = (key, label, extraClass = "") => (
+    <th
+      key={key}
+      onClick={() => toggle(key)}
+      className={`text-left font-semibold px-3 py-2 cursor-pointer select-none whitespace-nowrap hover:text-[#2B2A26] ${extraClass}`}
+      aria-sort={sort && sort.key === key ? (sort.dir === 1 ? "ascending" : "descending") : "none"}
+      title="Zum Sortieren tippen"
+    >
+      {label}
+      <span className="ml-1 text-[9px]" style={{ opacity: sort && sort.key === key ? 1 : 0.35 }}>
+        {sort && sort.key === key ? (sort.dir === 1 ? "▲" : "▼") : "↕"}
+      </span>
+    </th>
+  );
+  return { sorted, th, sort };
+}
+
 function SectionTable({ title, color, animals, onOpenAnimal, showParents, showGender, showAbgangsDatum, collapsible, showCowInfo, showBullInfo, showFirstCalving }) {
   const mobileScroll = useContext(MobileScrollContext);
   const cowStats = useContext(CowStatsContext);
   const bullStats = useContext(BullStatsContext);
   const kidCell = (k) => (k ? `${shortEarTag(k.earTag) || "ausstehend"} · ${formatDate(k.birthDate)}` : "–");
   const [collapsed, setCollapsed] = useState(false);
+  const getSortValue = useCallback(
+    (a, key) => {
+      const cs = cowStats[cleanEarTag(a.earTag)] || {};
+      const bs = bullStats[cleanEarTag(a.earTag)] || {};
+      switch (key) {
+        case "name": return a.name || "";
+        case "earTag": return cleanEarTag(a.earTag);
+        case "abgang": return a.abgangsDatum || "";
+        case "birth": return a.birthDate || "";
+        case "alter": return a.birthDate ? -new Date(a.birthDate).getTime() : "";
+        case "ersteKalbung": return cs.firstCalf?.birthDate || "";
+        case "firstFemale": return bs.firstFemale?.birthDate || "";
+        case "firstMale": return bs.firstMale?.birthDate || "";
+        case "aktKalb": return shortEarTag(cs.currentCalf?.earTag) || "";
+        case "letzteKalbung": return cs.lastCalving ? -new Date(cs.lastCalving).getTime() : "";
+        case "kalbungen": return cs.kalbungen || 0;
+        case "gender": return a.gender || "";
+        case "mother": return shortEarTag(a.motherEarTag) || "";
+        case "father": return shortEarTag(a.fatherEarTag) || "";
+        default: return "";
+      }
+    },
+    [cowStats, bullStats]
+  );
+  const { sorted: sortedAnimals, th } = useTableSort(animals, getSortValue);
   const headerContent = (
     <>
       <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ backgroundColor: color.bg }} />
@@ -1854,37 +1925,37 @@ function SectionTable({ title, color, animals, onOpenAnimal, showParents, showGe
           <table className="w-full text-[13px]" style={{ borderCollapse: "separate", borderSpacing: 0, minWidth: mobileScroll ? 560 : undefined }}>
             <thead>
               <tr className="bg-white text-[#6B6858] text-[11px] uppercase tracking-wide">
-                <th className="text-left font-semibold px-3 py-2 rounded-tl-xl">Name</th>
-                <th className="text-left font-semibold px-3 py-2">Ohrmarke</th>
-                {showAbgangsDatum && <th className="text-left font-semibold px-3 py-2">Abgangsdatum</th>}
-                <th className="text-left font-semibold px-3 py-2">Geb.datum</th>
-                <th className="text-left font-semibold px-3 py-2">Alter</th>
-                {showFirstCalving && <th className="text-left font-semibold px-3 py-2">1. Kalbung</th>}
+                {th("name", "Name", "rounded-tl-xl")}
+                {th("earTag", "Ohrmarke")}
+                {showAbgangsDatum && th("abgang", "Abgangsdatum")}
+                {th("birth", "Geb.datum")}
+                {th("alter", "Alter")}
+                {showFirstCalving && th("ersteKalbung", "1. Kalbung")}
                 {showBullInfo && (
                   <>
-                    <th className="text-left font-semibold px-3 py-2">1. weibl. Nachkomme</th>
-                    <th className="text-left font-semibold px-3 py-2">1. männl. Nachkomme</th>
+                    {th("firstFemale", "1. weibl. Nachkomme")}
+                    {th("firstMale", "1. männl. Nachkomme")}
                   </>
                 )}
                 {showCowInfo && (
                   <>
-                    <th className="text-left font-semibold px-3 py-2">Akt. Kalb</th>
-                    <th className="text-left font-semibold px-3 py-2">Letzte Kalbung</th>
-                    <th className="text-left font-semibold px-3 py-2">Kalbungen</th>
+                    {th("aktKalb", "Akt. Kalb")}
+                    {th("letzteKalbung", "Letzte Kalbung")}
+                    {th("kalbungen", "Kalbungen")}
                   </>
                 )}
-                {showGender && <th className="text-left font-semibold px-3 py-2">Geschlecht</th>}
+                {showGender && th("gender", "Geschlecht")}
                 {showParents && (
                   <>
-                    <th className="text-left font-semibold px-3 py-2">Mutter</th>
-                    <th className="text-left font-semibold px-3 py-2">Vater</th>
+                    {th("mother", "Mutter")}
+                    {th("father", "Vater")}
                   </>
                 )}
                 <th className="w-6 px-2 py-2 rounded-tr-xl"></th>
               </tr>
             </thead>
             <tbody>
-              {animals.map((a) => (
+              {sortedAnimals.map((a) => (
                 <tr
                   key={a.id}
                   onClick={() => onOpenAnimal(a)}
@@ -4742,20 +4813,45 @@ function BrunstlisteView({ animals, onOpenAnimal, onUpdateAnimal, addHistoryEven
     </svg>
   );
 
+  const getBrunstSortValue = useCallback(
+    (a, key) => {
+      switch (key) {
+        case "name": return a.name || "";
+        case "earTag": return cleanEarTag(a.earTag);
+        case "abschnitt": return CATEGORY_SINGULAR[a.category] || a.category || "";
+        case "letzteBrunst": return a.lastHeatDate || "";
+        case "naechsteBrunst": {
+          const n = a.pregnancyConfirmed ? null : nextExpectedHeat(a);
+          return n ? n.getTime() : "";
+        }
+        case "besamung": return a.lastInseminationDate || "";
+        case "status": return a.pregnancyConfirmed ? 1 : a.expectedCalvingDate ? 2 : 3;
+        case "vater": {
+          const f = calfFather(a, bulls);
+          return f ? shortEarTag(f.tag) : "";
+        }
+        case "kalbung": return a.expectedCalvingDate || "";
+        default: return "";
+      }
+    },
+    [bulls]
+  );
+  const { sorted: tableSorted, th: bth } = useTableSort(filtered, getBrunstSortValue);
+
   const renderTable = (list) => (
     <div className="rounded-xl border border-[#D9CFB8] bg-white overflow-x-auto">
       <table className="w-full text-[13px]" style={{ borderCollapse: "separate", borderSpacing: 0, minWidth: 800 }}>
         <thead>
           <tr className="bg-white text-[#6B6858] text-[11px] uppercase tracking-wide">
-            <th className="text-left font-semibold px-3 py-2">Name</th>
-            <th className="text-left font-semibold px-3 py-2">Ohrmarke</th>
-            <th className="text-left font-semibold px-3 py-2">Abschnitt</th>
-            <th className="text-left font-semibold px-3 py-2">Letzte Brunst</th>
-            <th className="text-left font-semibold px-3 py-2">Nächste Brunst</th>
-            <th className="text-left font-semibold px-3 py-2">Letzte Besamung</th>
-            <th className="text-left font-semibold px-3 py-2">Status</th>
-            <th className="text-left font-semibold px-3 py-2">Vater (Kalb)</th>
-            <th className="text-left font-semibold px-3 py-2">Erw. Kalbung</th>
+            {bth("name", "Name")}
+            {bth("earTag", "Ohrmarke")}
+            {bth("abschnitt", "Abschnitt")}
+            {bth("letzteBrunst", "Letzte Brunst")}
+            {bth("naechsteBrunst", "Nächste Brunst")}
+            {bth("besamung", "Letzte Besamung")}
+            {bth("status", "Status")}
+            {bth("vater", "Vater (Kalb)")}
+            {bth("kalbung", "Erw. Kalbung")}
             <th className="w-6 px-2 py-2"></th>
           </tr>
         </thead>
@@ -4834,6 +4930,9 @@ function BrunstlisteView({ animals, onOpenAnimal, onUpdateAnimal, addHistoryEven
         />
 
         <div className="flex items-center justify-between gap-2 mt-3 flex-wrap">
+          {ansicht === "tabelle" ? (
+            <p className="text-[11px] text-[#8A8672]">Zum Sortieren auf eine Spaltenüberschrift tippen</p>
+          ) : (
           <select
             value={breedingSortBy}
             onChange={(e) => setBreedingSortBy(e.target.value)}
@@ -4847,6 +4946,7 @@ function BrunstlisteView({ animals, onOpenAnimal, onUpdateAnimal, addHistoryEven
             <option value="besamung">Sortieren: Besamung</option>
             <option value="traechtigkeit">Sortieren: Bestätigte Trächtigkeit</option>
           </select>
+          )}
           <div className="flex items-center gap-2 shrink-0 flex-wrap">
             <div className="flex rounded-full border border-[#D9CFB8] bg-white p-0.5 gap-0.5 text-[11px]">
               {[
@@ -4895,6 +4995,7 @@ function BrunstlisteView({ animals, onOpenAnimal, onUpdateAnimal, addHistoryEven
       <div className="px-5 py-4 pb-10">
         {reiter === "kalender" && (
           <div className="mb-4">
+            <section className="rounded-xl border border-[#D9CFB8] bg-white p-3">
             <BrunftYearGrid
               animals={animals}
               today={todayRef}
@@ -4902,6 +5003,7 @@ function BrunstlisteView({ animals, onOpenAnimal, onUpdateAnimal, addHistoryEven
               setColStart={setKalStart}
               onOpenDay={(date) => setKalDay(isoDateKey(date))}
             />
+            </section>
             <h2 className="font-slab text-sm font-bold text-[#2B2A26] uppercase tracking-wide mt-3">
               {kalDay === isoDateKey(new Date()) ? "Heute" : formatDate(kalDay)} · {filtered.length} {filtered.length === 1 ? "Tier" : "Tiere"}
             </h2>
@@ -4913,7 +5015,7 @@ function BrunstlisteView({ animals, onOpenAnimal, onUpdateAnimal, addHistoryEven
             {emptyText}
           </p>
         ) : ansicht === "tabelle" ? (
-          renderTable(filtered)
+          renderTable(tableSorted)
         ) : (
           renderCards(filtered)
         )}
