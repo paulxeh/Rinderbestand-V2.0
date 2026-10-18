@@ -2653,7 +2653,186 @@ function AbgangsFormular({ animal, onSave, onCancel }) {
   );
 }
 
-function StallbuchView({ animal, onBack }) {
+// ===== Stallbuchblatt (nach Vorbild LKV-Stallbuchblatt) =====
+const KALBEVERLAUF = [
+  { value: "0", label: "0 – allein, z. B. Nachtkalbung" },
+  { value: "1", label: "1 – leicht, Hilfe nicht nötig" },
+  { value: "2", label: "2 – mittel, ein Helfer mit leichter Zughilfe" },
+  { value: "3", label: "3 – schwer, mehrere Helfer, mechanische Zughilfe, Tierarzt" },
+];
+
+function daysBetween(a, b) {
+  const da = new Date(a);
+  const db = new Date(b);
+  if (isNaN(da.getTime()) || isNaN(db.getTime())) return null;
+  return Math.round((db - da) / 86400000);
+}
+
+function formatMonthsDecimal(fromISO, toISO) {
+  const d = daysBetween(fromISO, toISO);
+  if (d === null) return "–";
+  return `${(d / 30.4375).toFixed(1).replace(".", ",")} Mon.`;
+}
+
+// Kalbungen einer Kuh: Kälber gruppiert, Geburten ≤ 2 Tage auseinander = eine Kalbung (Zwillinge)
+function buildCalvings(cow, allAnimals) {
+  const kids = allAnimals
+    .filter((a) => cow.earTag && sameEarTag(a.motherEarTag, cow.earTag) && a.birthDate)
+    .sort((x, y) => (x.birthDate < y.birthDate ? -1 : x.birthDate > y.birthDate ? 1 : 0));
+  const calvings = [];
+  kids.forEach((k) => {
+    const last = calvings[calvings.length - 1];
+    if (last && daysBetween(last.date, k.birthDate) <= 2) last.calves.push(k);
+    else calvings.push({ date: k.birthDate, calves: [k] });
+  });
+  calvings.forEach((c, i) => {
+    c.nr = i + 1;
+    c.zkz = i > 0 ? daysBetween(calvings[i - 1].date, c.date) : null;
+  });
+  return calvings;
+}
+
+function verbleibText(a) {
+  if (a.category === "Abgänge") {
+    const art = a.abgangsGrund === "verkauft" ? "verkauft" : a.abgangsGrund === "verendet" ? "verendet" : "Abgang";
+    return a.abgangsDatum ? `${art} ${formatDate(a.abgangsDatum)}` : art;
+  }
+  if (a.category === "Unregistriert") return "unregistriert";
+  return CATEGORY_SINGULAR[a.category] || a.category || "–";
+}
+
+function SbBox({ title, children, className = "" }) {
+  return (
+    <section className={`rounded-xl border border-[#D9CFB8] bg-white mb-4 overflow-hidden ${className}`}>
+      {title && (
+        <h2 className="px-3 py-2 text-[11px] font-semibold uppercase tracking-wide text-[#6B6858] border-b border-[#D9CFB8]" style={{ backgroundColor: "#F9EFE4" }}>
+          {title}
+        </h2>
+      )}
+      {children}
+    </section>
+  );
+}
+
+function SbField({ label, children }) {
+  return (
+    <div className="px-3 py-2 border-b border-r border-[#F9EFE4] min-w-0">
+      <p className="text-[10px] uppercase tracking-wide text-[#8A8672]">{label}</p>
+      <p className="text-[13px] font-medium text-[#2B2A26] break-words">{children || "–"}</p>
+    </div>
+  );
+}
+
+function SbTable({ head, rows, minWidth = 520 }) {
+  return (
+    <div className="overflow-x-auto">
+      <table className="w-full text-[12px]" style={{ borderCollapse: "collapse", minWidth }}>
+        <thead>
+          <tr className="text-[10px] uppercase tracking-wide text-[#6B6858]" style={{ backgroundColor: "#F9EFE4" }}>
+            {head.map((h, i) => (
+              <th key={i} className="text-left font-semibold px-2 py-1.5 border-b border-[#D9CFB8] whitespace-nowrap">{h}</th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>{rows}</tbody>
+      </table>
+    </div>
+  );
+}
+
+function StallbuchView({ animal, allAnimals = [], onBack, onOpenAnimal, onUpdateField }) {
+  const isAdmin = useContext(AppModeContext) === "admin";
+  const current = allAnimals.find((a) => a.id === animal.id) || animal;
+  const find = (tag) => (tag ? allAnimals.find((a) => sameEarTag(a.earTag, tag)) || null : null);
+  const isFemale = current.gender === "weiblich";
+  const breed = BREEDS.find((b) => b.code === current.breedCode);
+
+  // Abstammung
+  const vater = find(current.fatherEarTag);
+  const mutter = find(current.motherEarTag);
+  const parentCell = (tag, rec) =>
+    tag ? (
+      <span>
+        {formatEarTag(tag)}
+        {rec?.name ? ` · ${rec.name}` : ""}
+        {rec && (
+          <button type="button" onClick={() => onOpenAnimal && onOpenAnimal(rec)} className="ml-1 underline text-[#6B6858]">
+            öffnen
+          </button>
+        )}
+      </span>
+    ) : null;
+
+  // Zugang / Abgang
+  const z = current.hitZugang || {};
+  const zugangArt = { GE: "Geburt im Betrieb", ZU: "Zukauf", ER: "Ersterfassung", EU: "EU-Einfuhr", IM: "Import" }[z.art] || "";
+  const zugang = z.datum
+    ? `${formatDate(z.datum)}${zugangArt ? ` · ${zugangArt}` : ""}${z.vorbesitzer ? ` (von ${z.vorbesitzer})` : ""}`
+    : current.birthDate
+    ? `${formatDate(current.birthDate)} · Geburt`
+    : "";
+  const abgang =
+    current.category === "Abgänge"
+      ? `${current.abgangsDatum ? formatDate(current.abgangsDatum) : "–"} · ${current.abgangsGrund === "verkauft" ? "verkauft" : current.abgangsGrund === "verendet" ? "verendet" : "Abgang"}${current.verkauftAn ? ` an ${current.verkauftAn}` : ""}`
+      : "";
+
+  // Abkalbe- und Nachzuchtdaten
+  const calvings = isFemale ? buildCalvings(current, allAnimals) : [];
+  const zkzList = calvings.map((c) => c.zkz).filter((v) => v !== null);
+  const avgZkz = zkzList.length ? Math.round(zkzList.reduce((s, v) => s + v, 0) / zkzList.length) : null;
+  const eka = calvings.length && current.birthDate ? formatMonthsDecimal(current.birthDate, calvings[0].date) : "–";
+
+  // Belegungen zur letzten Kalbung (zwischen vorletzter und letzter Kalbung) bzw. seit letzter Kalbung
+  const besamungen = (current.history || [])
+    .filter((e) => e.type === "besamung" && e.date)
+    .map((e) => e.date)
+    .sort();
+  const lastCalving = calvings.length ? calvings[calvings.length - 1].date : null;
+  const prevCalving = calvings.length > 1 ? calvings[calvings.length - 2].date : null;
+  const zurLetzten = lastCalving ? besamungen.filter((d) => d < lastCalving && (!prevCalving || d > prevCalving)) : [];
+  const seitLetzter = lastCalving ? besamungen.filter((d) => d > lastCalving) : besamungen;
+  const fertility = (() => {
+    if (!prevCalving || zurLetzten.length === 0) return null;
+    const rast = daysBetween(prevCalving, zurLetzten[0]);
+    const guest = daysBetween(prevCalving, zurLetzten[zurLetzten.length - 1]);
+    return { rast, guest, verz: guest - rast };
+  })();
+
+  // Bulle bei der Besamung: Deckbulle, der zu diesem Datum im selben Stall stand (aus Stall-Bewegungen)
+  const bullOn = (dateISO) => {
+    const mine = buildStallTimeline(current);
+    const bulls = allAnimals.filter((a) => a.category === "Deckbullen" || a.originalCategory === "Deckbullen");
+    for (const bull of bulls) {
+      for (const segA of mine) {
+        for (const segB of buildStallTimeline(bull)) {
+          const ov = overlapPeriod(segA, segB);
+          if (ov && (!ov.from || ov.from <= dateISO) && (!ov.to || ov.to >= dateISO)) return bull;
+        }
+      }
+    }
+    return null;
+  };
+
+  const belegRows = (list) =>
+    list.map((d, i) => {
+      const bull = bullOn(d);
+      return (
+        <tr key={d + i} className="border-b border-[#F9EFE4]">
+          <td className="px-2 py-1.5">{i + 1}</td>
+          <td className="px-2 py-1.5">{formatDate(d)}</td>
+          <td className="px-2 py-1.5">{bull ? `${formatEarTag(bull.earTag)}${bull.name ? ` · ${bull.name}` : ""}` : "–"}</td>
+          <td className="px-2 py-1.5">{bull ? BREEDS.find((b) => b.code === bull.breedCode)?.short || "–" : "–"}</td>
+        </tr>
+      );
+    });
+
+  // Nachzucht als Vater (männliche Tiere)
+  const nachzuchtVater = !isFemale
+    ? allAnimals
+        .filter((a) => current.earTag && sameEarTag(a.fatherEarTag, current.earTag))
+        .sort((x, y) => ((x.birthDate || "") < (y.birthDate || "") ? 1 : -1))
+    : [];
+
   return (
     <div className="fixed inset-0 z-30 overflow-y-auto" style={{ backgroundColor: "#F9EFE4" }}>
       <div
@@ -2661,10 +2840,10 @@ function StallbuchView({ animal, onBack }) {
         style={{ backgroundColor: "rgba(249, 239, 228, 0.95)" }}
       >
         <div className="min-w-0">
-          <p className="text-xs uppercase tracking-wide text-[#8A8672]">Stallbuch</p>
+          <p className="text-xs uppercase tracking-wide text-[#8A8672]">Stallbuchblatt</p>
           <h1 className="font-slab text-lg font-bold text-[#2B2A26] truncate">
-            {formatEarTag(animal.earTag)}
-            {animal.name ? ` – ${animal.name}` : ""}
+            {formatEarTag(current.earTag) || "ausstehend"}
+            {current.name ? ` – ${current.name}` : ""}
           </h1>
         </div>
         <button
@@ -2676,7 +2855,144 @@ function StallbuchView({ animal, onBack }) {
           Zurück
         </button>
       </div>
-      <div className="px-5 py-4 pb-10" />
+
+      <div className="px-5 py-4 pb-10 max-w-3xl mx-auto">
+        <SbBox title="Tier">
+          <div className="grid grid-cols-2 sm:grid-cols-4">
+            <SbField label="Ohrmarke">{formatEarTag(current.earTag)}</SbField>
+            <SbField label="Name">{current.name}</SbField>
+            <SbField label="Geb.datum">{current.birthDate ? formatDate(current.birthDate) : ""}</SbField>
+            <SbField label="Geschlecht">{genderLabel(current.gender)}</SbField>
+            <SbField label="Rasse">{breed ? `${breed.short} · ${breed.name}` : current.breed}</SbField>
+            <SbField label="Abschnitt">{zugehoerigkeit(current, true)}</SbField>
+            <SbField label="Zugang">{zugang}</SbField>
+            <SbField label="Abgang">{abgang}</SbField>
+          </div>
+        </SbBox>
+
+        <SbBox title="Abstammung">
+          <div className="grid grid-cols-1 sm:grid-cols-2">
+            <SbField label="V – Vater">{parentCell(current.fatherEarTag, vater)}</SbField>
+            <SbField label="M – Mutter">{parentCell(current.motherEarTag, mutter)}</SbField>
+            <SbField label="VV – Vater des Vaters">{parentCell(vater?.fatherEarTag, find(vater?.fatherEarTag))}</SbField>
+            <SbField label="MV – Vater der Mutter">{parentCell(mutter?.fatherEarTag, find(mutter?.fatherEarTag))}</SbField>
+            <SbField label="VM – Mutter des Vaters">{parentCell(vater?.motherEarTag, find(vater?.motherEarTag))}</SbField>
+            <SbField label="MM – Mutter der Mutter">{parentCell(mutter?.motherEarTag, find(mutter?.motherEarTag))}</SbField>
+          </div>
+        </SbBox>
+
+        {isFemale && (
+          <>
+            <SbBox title="Abkalbe- und Nachzuchtdaten">
+              <div className="grid grid-cols-3 border-b border-[#D9CFB8]">
+                <SbField label="Kalbungen">{String(calvings.length)}</SbField>
+                <SbField label="EKA (Erstkalbealter)">{eka}</SbField>
+                <SbField label="Durchschn. ZKZ">{avgZkz !== null ? `${avgZkz} Tage` : ""}</SbField>
+              </div>
+              {calvings.length === 0 ? (
+                <p className="px-3 py-3 text-sm text-[#8A8672] italic">Noch keine Kalbungen erfasst.</p>
+              ) : (
+                <SbTable
+                  minWidth={640}
+                  head={["Nr.", "Datum", "G", "Verlauf", "Name", "Ohrmarke", "Kalbvater", "Verbleib", "ZKZ"]}
+                  rows={calvings.flatMap((c) =>
+                    c.calves.map((k, j) => (
+                      <tr key={k.id} className="border-b border-[#F9EFE4] align-top">
+                        <td className="px-2 py-1.5">{j === 0 ? c.nr : ""}</td>
+                        <td className="px-2 py-1.5 whitespace-nowrap">{j === 0 ? formatDate(c.date) : ""}</td>
+                        <td className="px-2 py-1.5">{k.gender === "weiblich" ? "W" : k.gender === "männlich" ? "M" : "–"}</td>
+                        <td className="px-2 py-1.5">
+                          {isAdmin && onUpdateField ? (
+                            <select
+                              value={k.kalbeverlauf || ""}
+                              onChange={(e) => onUpdateField(k.id, { kalbeverlauf: e.target.value })}
+                              className="border border-[#D9CFB8] rounded px-1 py-0.5 bg-white text-[12px]"
+                              aria-label="Kalbeverlauf"
+                            >
+                              <option value="">–</option>
+                              {KALBEVERLAUF.map((o) => (
+                                <option key={o.value} value={o.value}>{o.value}</option>
+                              ))}
+                            </select>
+                          ) : (
+                            k.kalbeverlauf || "–"
+                          )}
+                        </td>
+                        <td className="px-2 py-1.5">{k.name || "–"}</td>
+                        <td className="px-2 py-1.5 whitespace-nowrap">
+                          <button type="button" className="underline" onClick={() => onOpenAnimal && onOpenAnimal(k)}>
+                            {formatEarTag(k.earTag) || "ausstehend"}
+                          </button>
+                        </td>
+                        <td className="px-2 py-1.5 whitespace-nowrap">{k.fatherEarTag ? formatEarTag(k.fatherEarTag) : "–"}</td>
+                        <td className="px-2 py-1.5 whitespace-nowrap">{verbleibText(k)}</td>
+                        <td className="px-2 py-1.5 whitespace-nowrap">{j === 0 && c.zkz !== null ? `${c.zkz} T` : ""}</td>
+                      </tr>
+                    ))
+                  )}
+                />
+              )}
+              <div className="px-3 py-2 text-[11px] text-[#6B6858] border-t border-[#D9CFB8]">
+                <p className="font-semibold mb-0.5">Kalbeverlauf</p>
+                {KALBEVERLAUF.map((o) => (
+                  <p key={o.value}>{o.label}</p>
+                ))}
+                <p className="mt-1">G = Geschlecht · ZKZ = Zwischenkalbezeit in Tagen · EKA = Alter bei der ersten Kalbung</p>
+              </div>
+            </SbBox>
+
+            <SbBox title="Belegungen zur letzten Kalbung">
+              {zurLetzten.length === 0 ? (
+                <p className="px-3 py-3 text-sm text-[#8A8672] italic">Keine Besamungen zwischen den letzten beiden Kalbungen erfasst.</p>
+              ) : (
+                <SbTable minWidth={420} head={["BF", "Datum", "Bulle (im Stall)", "Rasse"]} rows={belegRows(zurLetzten)} />
+              )}
+              <div className="grid grid-cols-3 border-t border-[#D9CFB8]">
+                <SbField label="Rastzeit">{fertility ? `${fertility.rast} Tage` : ""}</SbField>
+                <SbField label="Güstzeit">{fertility ? `${fertility.guest} Tage` : ""}</SbField>
+                <SbField label="Verzögerungszeit">{fertility ? `${fertility.verz} Tage` : ""}</SbField>
+              </div>
+            </SbBox>
+
+            <SbBox title={lastCalving ? "Belegungen seit der letzten Kalbung" : "Belegungen"}>
+              {seitLetzter.length === 0 ? (
+                <p className="px-3 py-3 text-sm text-[#8A8672] italic">Keine Besamungen erfasst.</p>
+              ) : (
+                <SbTable minWidth={420} head={["BF", "Datum", "Bulle (im Stall)", "Rasse"]} rows={belegRows(seitLetzter)} />
+              )}
+              <p className="px-3 py-2 text-[11px] text-[#6B6858] border-t border-[#D9CFB8]">
+                BF = Besamungsfolge · Rastzeit = Kalbung bis 1. Besamung · Güstzeit = Kalbung bis letzte Besamung vor der nächsten Kalbung · Verzögerungszeit = Güstzeit − Rastzeit. Der Bulle wird aus den Stall-Bewegungen ermittelt (Deckbulle im selben Stall).
+              </p>
+            </SbBox>
+          </>
+        )}
+
+        {!isFemale && (
+          <SbBox title={`Nachzucht als Vater (${nachzuchtVater.length})`}>
+            {nachzuchtVater.length === 0 ? (
+              <p className="px-3 py-3 text-sm text-[#8A8672] italic">Keine Nachkommen mit diesem Vater erfasst.</p>
+            ) : (
+              <SbTable
+                minWidth={480}
+                head={["Datum", "G", "Ohrmarke", "Mutter", "Verbleib"]}
+                rows={nachzuchtVater.map((k) => (
+                  <tr key={k.id} className="border-b border-[#F9EFE4]">
+                    <td className="px-2 py-1.5 whitespace-nowrap">{formatDate(k.birthDate)}</td>
+                    <td className="px-2 py-1.5">{k.gender === "weiblich" ? "W" : k.gender === "männlich" ? "M" : "–"}</td>
+                    <td className="px-2 py-1.5 whitespace-nowrap">
+                      <button type="button" className="underline" onClick={() => onOpenAnimal && onOpenAnimal(k)}>
+                        {formatEarTag(k.earTag) || "ausstehend"}
+                      </button>
+                    </td>
+                    <td className="px-2 py-1.5 whitespace-nowrap">{k.motherEarTag ? formatEarTag(k.motherEarTag) : "–"}</td>
+                    <td className="px-2 py-1.5 whitespace-nowrap">{verbleibText(k)}</td>
+                  </tr>
+                ))}
+              />
+            )}
+          </SbBox>
+        )}
+      </div>
     </div>
   );
 }
@@ -6037,6 +6353,9 @@ function RinderbestandApp() {
       {stallbuchAnimal && (
         <StallbuchView
           animal={stallbuchAnimal}
+          allAnimals={animals}
+          onOpenAnimal={(a) => setPassAnimal(a)}
+          onUpdateField={handleUpdateField}
           onBack={() => {
             if (stallbuchReturnTo) setPassAnimal(stallbuchReturnTo);
             setStallbuchReturnTo(null);
