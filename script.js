@@ -1860,7 +1860,7 @@ function useTableSort(list, getValue) {
   return { sorted, th, sort };
 }
 
-function SectionTable({ title, color, animals, onOpenAnimal, showParents, showGender, showAbgangsDatum, collapsible, showCowInfo, showBullInfo, showFirstCalving }) {
+function SectionTable({ title, color, animals, onOpenAnimal, showParents, showGender, showAbgangsDatum, collapsible, showCowInfo, showBullInfo, showFirstCalving, showAbgangsGrund }) {
   const mobileScroll = useContext(MobileScrollContext);
   const cowStats = useContext(CowStatsContext);
   const bullStats = useContext(BullStatsContext);
@@ -1874,6 +1874,7 @@ function SectionTable({ title, color, animals, onOpenAnimal, showParents, showGe
         case "name": return a.name || "";
         case "earTag": return cleanEarTag(a.earTag);
         case "abgang": return a.abgangsDatum || "";
+        case "abgangsart": return a.abgangsGrund || "";
         case "birth": return a.birthDate || "";
         case "alter": return a.birthDate ? -new Date(a.birthDate).getTime() : "";
         case "ersteKalbung": return cs.firstCalf?.birthDate || "";
@@ -1928,6 +1929,7 @@ function SectionTable({ title, color, animals, onOpenAnimal, showParents, showGe
                 {th("name", "Name", "rounded-tl-xl")}
                 {th("earTag", "Ohrmarke")}
                 {showAbgangsDatum && th("abgang", "Abgangsdatum")}
+                {showAbgangsGrund && th("abgangsart", "Abgangsart")}
                 {th("birth", "Geb.datum")}
                 {th("alter", "Alter")}
                 {showFirstCalving && th("ersteKalbung", "1. Kalbung")}
@@ -1966,6 +1968,9 @@ function SectionTable({ title, color, animals, onOpenAnimal, showParents, showGe
                   </td>
                   <td className="px-3 py-2 text-[#2B2A26]">{formatEarTag(a.earTag) || "ausstehend"}</td>
                   {showAbgangsDatum && <td className="px-3 py-2 text-[#2B2A26]">{a.abgangsDatum ? formatDate(a.abgangsDatum) : "–"}</td>}
+                  {showAbgangsGrund && (
+                    <td className="px-3 py-2 text-[#2B2A26]">{a.abgangsGrund === "verkauft" ? "verkauft" : a.abgangsGrund === "verendet" ? "verendet" : "–"}</td>
+                  )}
                   <td className="px-3 py-2 text-[#2B2A26]">{formatDate(a.birthDate)}</td>
                   <td className="px-3 py-2 text-[#2B2A26]">
                     {formatAgeShort(a.birthDate, a.category === "Abgänge" && a.abgangsDatum ? a.abgangsDatum : undefined)}
@@ -5199,6 +5204,134 @@ function BrunstEintragDialog({ animals, onUpdateAnimal, onOpenAddCalf, onClose }
   );
 }
 
+// ===== Abgänge-Seite (aufgebaut wie die Brunstliste) =====
+function AbgaengeView({ animals, onOpenAnimal, onBack, onRequestAbgang }) {
+  const isAdmin = useContext(AppModeContext) === "admin";
+  const [reiter, setReiter] = useState("gesamt"); // gesamt | verkauft | verendet
+  const [search, setSearch] = useState("");
+  const [addOpen, setAddOpen] = useState(false);
+
+  const abgaenge = animals.filter((a) => a.category === "Abgänge");
+  const verkauft = abgaenge.filter((a) => a.abgangsGrund === "verkauft");
+  const verendet = abgaenge.filter((a) => a.abgangsGrund === "verendet");
+  const term = search.trim().toLowerCase();
+  const matches = (a) =>
+    !term ||
+    cleanEarTag(a.earTag || "").toLowerCase().includes(term.replace(/\s/g, "")) ||
+    (a.name || "").toLowerCase().includes(term);
+  const list = sortByAbgangsDatum((reiter === "verkauft" ? verkauft : reiter === "verendet" ? verendet : abgaenge).filter(matches));
+  // Tiere, die noch nach "Abgänge" verschoben werden können
+  const movable = animals.filter((a) => moveOptions(a).includes("Abgänge"));
+
+  const Tile = ({ id, label, value, bg, fg, border }) => (
+    <button
+      type="button"
+      onClick={() => setReiter(id)}
+      className="h-[68px] rounded-lg px-1 py-2 flex flex-col items-center justify-center text-center transition overflow-hidden border"
+      style={{ backgroundColor: bg, color: fg, borderColor: border || bg, boxShadow: reiter === id ? "0 0 0 2px #2B2A26 inset" : undefined }}
+    >
+      <p className="text-[10px] uppercase tracking-wide truncate w-full" style={{ opacity: 0.85 }}>{label}</p>
+      <p className="font-slab font-bold" style={{ fontSize: "20px", lineHeight: "1.2", fontVariantNumeric: "tabular-nums", fontFamily: "'Arvo', serif" }}>
+        {value}
+      </p>
+    </button>
+  );
+
+  return (
+    <div className="fixed inset-0 z-30 overflow-y-auto" style={{ backgroundColor: "#F9EFE4" }}>
+      <header className="border-b border-[#D9CFB8] px-5 pt-6 pb-4" style={{ backgroundColor: "#F9EFE4" }}>
+        <p className="text-xs uppercase tracking-[0.2em] text-[#6B6858] mb-1">Übersicht</p>
+        <h1 className="font-slab text-2xl font-bold text-[#2B2A26]">Abgänge</h1>
+
+        <div className="grid grid-cols-3 gap-2 mt-4">
+          <Tile id="gesamt" label="Gesamt" value={abgaenge.length} bg="#FFFFFF" fg="#2B2A26" border="#D9CFB8" />
+          <Tile id="verkauft" label="Verkauft" value={verkauft.length} bg="#FBCD49" fg="#2B2A26" />
+          <Tile id="verendet" label="Verendet" value={verendet.length} bg="#BB201D" fg="#FFFFFF" />
+        </div>
+
+        <input
+          type="text"
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          placeholder="Suche nach Ohrmarke oder Name…"
+          className="w-full mt-4 px-3 py-2 rounded-lg border border-[#D9CFB8] bg-white text-[#2B2A26] text-sm focus:outline-none focus:ring-2 focus:ring-[#4C6B3F]"
+        />
+
+        <div className="flex items-center justify-between gap-2 mt-3 flex-wrap">
+          <p className="text-[11px] text-[#8A8672]">Zum Sortieren auf eine Spaltenüberschrift tippen</p>
+          <div className="flex items-center gap-2 shrink-0">
+            {isAdmin && (
+              <button
+                type="button"
+                onClick={() => setAddOpen(true)}
+                className="p-1.5 rounded-lg bg-white border border-[#D9CFB8] text-[#2B2A26]"
+                aria-label="Abgang eintragen"
+              >
+                <Plus size={16} />
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={() => {
+                setSearch("");
+                onBack();
+              }}
+              className="text-xs font-semibold rounded-lg px-3 py-1.5 transition whitespace-nowrap"
+              style={{ color: "#FFFFFF", backgroundColor: "#2B2A26", border: "1px solid #2B2A26" }}
+            >
+              Zurück
+            </button>
+          </div>
+        </div>
+      </header>
+
+      <div className="px-5 py-4 pb-10">
+        <SectionTable
+          key={reiter}
+          title={reiter === "verkauft" ? "Verkauft" : reiter === "verendet" ? "Verendet" : "Alle Abgänge"}
+          color={reiter === "verkauft" ? { bg: "#FBCD49", fg: "#2B2A26" } : reiter === "verendet" ? { bg: "#BB201D", fg: "#FFFFFF" } : colorForCategory("Abgänge")}
+          animals={list}
+          showAbgangsDatum
+          showAbgangsGrund={reiter === "gesamt"}
+          onOpenAnimal={onOpenAnimal}
+        />
+      </div>
+
+      {addOpen && (
+        <div
+          className="fixed inset-0 z-40 flex items-end sm:items-center justify-center"
+          style={{ position: "fixed", top: 0, right: 0, bottom: 0, left: 0, backgroundColor: "rgba(0,0,0,0.4)" }}
+          onClick={() => setAddOpen(false)}
+        >
+          <div onClick={(e) => e.stopPropagation()} className="w-full sm:max-w-sm bg-white rounded-t-2xl sm:rounded-2xl border border-[#D9CFB8] p-5 pb-6">
+            <div className="flex items-center justify-between mb-3">
+              <h2 className="font-slab text-lg font-bold text-[#2B2A26]">Abgang eintragen</h2>
+              <button type="button" onClick={() => setAddOpen(false)} className="p-1 text-[#8A8672] hover:text-[#2B2A26]" aria-label="Schließen">
+                <X size={20} />
+              </button>
+            </div>
+            <p className="text-sm text-[#8A8672] mb-3">Welches Tier ist verkauft oder verendet? Danach öffnet sich das Abgangsformular.</p>
+            <label className="block text-xs font-semibold uppercase tracking-wide text-[#6B6858] mb-1">Ohrmarke</label>
+            <EarTagSearchSelect
+              value=""
+              onChange={(earTag) => {
+                const found = movable.find((a) => sameEarTag(a.earTag, earTag));
+                if (found) {
+                  setAddOpen(false);
+                  onRequestAbgang(found);
+                }
+              }}
+              options={movable}
+              placeholder="Ohrmarke oder Namen suchen…"
+              emptyLabel="Bitte wählen…"
+            />
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function StaelleView({ onBack }) {
   const isAdmin = useContext(AppModeContext) === "admin";
   const [staelle, setStaelle] = useState([]);
@@ -6428,26 +6561,7 @@ function RinderbestandApp() {
                   />
                 )
               : listView === "Abgänge"
-              ? (
-                  <>
-                    <SectionTable
-                      title="Verendet"
-                      color={{ bg: "#BB201D", fg: "#FFFFFF" }}
-                      animals={sortByAbgangsDatum(sorted.filter((a) => a.category === "Abgänge" && a.abgangsGrund === "verendet"))}
-                      showAbgangsDatum
-                      collapsible
-                      onOpenAnimal={(a) => setPassAnimal(a)}
-                    />
-                    <SectionTable
-                      title="Verkauft"
-                      color={{ bg: "#FBCD49", fg: "#2B2A26" }}
-                      animals={sortByAbgangsDatum(sorted.filter((a) => a.category === "Abgänge" && a.abgangsGrund === "verkauft"))}
-                      showAbgangsDatum
-                      collapsible
-                      onOpenAnimal={(a) => setPassAnimal(a)}
-                    />
-                  </>
-                )
+              ? null
               : (
                   <>
                     {listView === "Kälber" && (
@@ -6946,6 +7060,18 @@ function RinderbestandApp() {
       )}
 
       {staelleOpen && <StaelleView onBack={() => setStaelleOpen(false)} />}
+
+      {listView === "Abgänge" && (
+        <AbgaengeView
+          animals={animals}
+          onOpenAnimal={(a) => setPassAnimal(a)}
+          onBack={() => setListView(null)}
+          onRequestAbgang={(a) => {
+            setAbgangReturnTo(null);
+            setAbgangAnimal(a);
+          }}
+        />
+      )}
 
       {brunstlisteOpen && (
         <BrunstlisteView
