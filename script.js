@@ -4954,7 +4954,7 @@ function BrunstlisteView({ animals, onOpenAnimal, onUpdateAnimal, addHistoryEven
             <option value="traechtigkeit">Sortieren: Bestätigte Trächtigkeit</option>
           </select>
           )}
-          <div className="flex items-center gap-2 shrink-0 flex-wrap">
+          <div className="flex items-center justify-end gap-2 shrink-0 flex-wrap ml-auto">
             {reiter !== "kalender" && (
             <div className="flex rounded-full border border-[#D9CFB8] bg-white p-0.5 gap-0.5 text-[11px]">
               {[
@@ -5259,7 +5259,7 @@ function AbgaengeView({ animals, onOpenAnimal, onBack, onRequestAbgang }) {
 
         <div className="flex items-center justify-between gap-2 mt-3 flex-wrap">
           <p className="text-[11px] text-[#8A8672]">Zum Sortieren auf eine Spaltenüberschrift tippen</p>
-          <div className="flex items-center gap-2 shrink-0">
+          <div className="flex items-center justify-end gap-2 shrink-0 ml-auto">
             {isAdmin && (
               <button
                 type="button"
@@ -6445,7 +6445,7 @@ function RinderbestandApp() {
                   ? "Unregistrierte Ohrenmarken"
                   : listView}
               </h2>
-              <div className="flex items-center gap-2 shrink-0 flex-wrap">
+              <div className="flex items-center justify-end gap-2 shrink-0 flex-wrap ml-auto">
                 {(CATEGORIES.includes(listView) || listView === "Gesamt") && (
                   <div className="flex rounded-full border border-[#D9CFB8] bg-white p-0.5 gap-0.5 text-[11px]">
                     <button
