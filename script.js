@@ -365,6 +365,8 @@ const CowStatsContext = createContext({});
 const BullStatsContext = createContext({});
 // Liste aller Deckbullen (für Bullen-Auswahl bei der Besamung und "Vater des Kalbs")
 const BullsContext = createContext([]);
+// Alle Tiere (für Nachkommen-Zählung in Tabellen)
+const AllAnimalsContext = createContext([]);
 
 // Deckbulle, der zu einem Datum im selben Stall wie die Kuh stand (aus Stall-Bewegungen)
 function deckbulleImStall(cow, bulls, dateISO) {
@@ -1860,12 +1862,15 @@ function useTableSort(list, getValue) {
   return { sorted, th, sort };
 }
 
-function SectionTable({ title, color, animals, onOpenAnimal, showParents, showGender, showAbgangsDatum, collapsible, showCowInfo, showBullInfo, showFirstCalving, showAbgangsGrund }) {
+function SectionTable({ title, color, animals, onOpenAnimal, showParents, showGender, showAbgangsDatum, collapsible, showCowInfo, showBullInfo, showFirstCalving, showAbgangsGrund, showNachkommen }) {
   const mobileScroll = useContext(MobileScrollContext);
   const cowStats = useContext(CowStatsContext);
   const bullStats = useContext(BullStatsContext);
   const kidCell = (k) => (k ? `${shortEarTag(k.earTag) || "ausstehend"} · ${formatDate(k.birthDate)}` : "–");
   const [collapsed, setCollapsed] = useState(false);
+  const allForKids = useContext(AllAnimalsContext);
+  const kidsOf = (a) =>
+    a.earTag ? allForKids.filter((k) => sameEarTag(k.motherEarTag, a.earTag) || sameEarTag(k.fatherEarTag, a.earTag)).length : 0;
   const getSortValue = useCallback(
     (a, key) => {
       const cs = cowStats[cleanEarTag(a.earTag)] || {};
@@ -1875,6 +1880,7 @@ function SectionTable({ title, color, animals, onOpenAnimal, showParents, showGe
         case "earTag": return cleanEarTag(a.earTag);
         case "abgang": return a.abgangsDatum || "";
         case "abgangsart": return a.abgangsGrund || "";
+        case "nachkommen": return kidsOf(a);
         case "birth": return a.birthDate || "";
         case "alter": return a.birthDate ? -new Date(a.birthDate).getTime() : "";
         case "ersteKalbung": return cs.firstCalf?.birthDate || "";
@@ -1889,7 +1895,7 @@ function SectionTable({ title, color, animals, onOpenAnimal, showParents, showGe
         default: return "";
       }
     },
-    [cowStats, bullStats]
+    [cowStats, bullStats, allForKids]
   );
   const { sorted: sortedAnimals, th } = useTableSort(animals, getSortValue);
   const headerContent = (
@@ -1932,6 +1938,7 @@ function SectionTable({ title, color, animals, onOpenAnimal, showParents, showGe
                 {showAbgangsGrund && th("abgangsart", "Abgangsart")}
                 {th("birth", "Geb.datum")}
                 {th("alter", "Alter")}
+                {showNachkommen && th("nachkommen", "Nachkommen")}
                 {showFirstCalving && th("ersteKalbung", "1. Kalbung")}
                 {showBullInfo && (
                   <>
@@ -1975,6 +1982,7 @@ function SectionTable({ title, color, animals, onOpenAnimal, showParents, showGe
                   <td className="px-3 py-2 text-[#2B2A26]">
                     {formatAgeShort(a.birthDate, a.category === "Abgänge" && a.abgangsDatum ? a.abgangsDatum : undefined)}
                   </td>
+                  {showNachkommen && <td className="px-3 py-2 text-[#2B2A26]" style={{ fontVariantNumeric: "tabular-nums" }}>{kidsOf(a)}</td>}
                   {showFirstCalving && (
                     <td className="px-3 py-2 text-[#2B2A26] whitespace-nowrap">{kidCell(cowStats[cleanEarTag(a.earTag)]?.firstCalf)}</td>
                   )}
@@ -5332,6 +5340,184 @@ function AbgaengeView({ animals, onOpenAnimal, onBack, onRequestAbgang }) {
   );
 }
 
+// ===== Unregistrierte Ohrenmarken (aufgebaut wie Abgänge/Brunstliste) =====
+function UnregistriertView({ animals, onOpenAnimal, onBack, onCreateUnregistered }) {
+  const isAdmin = useContext(AppModeContext) === "admin";
+  const [reiter, setReiter] = useState("gesamt"); // gesamt | muetter | vaeter | kaelber
+  const [search, setSearch] = useState("");
+  const [addOpen, setAddOpen] = useState(false);
+  const [newTag, setNewTag] = useState("");
+  const [newGender, setNewGender] = useState("weiblich");
+  const [addError, setAddError] = useState("");
+
+  const unreg = animals.filter((a) => a.category === "Unregistriert");
+  const motherTags = new Set(animals.map((a) => cleanEarTag(a.motherEarTag)).filter(Boolean));
+  const fatherTags = new Set(animals.map((a) => cleanEarTag(a.fatherEarTag)).filter(Boolean));
+  const isMutter = (a) => motherTags.has(cleanEarTag(a.earTag));
+  // Kälber = unregistrierte Ohrmarken, die bei keinem Tier als Mutter oder Vater eingetragen sind
+  const isKalb = (a) => !isMutter(a) && !fatherTags.has(cleanEarTag(a.earTag));
+  const muetter = unreg.filter(isMutter);
+  const vaeter = unreg.filter((a) => fatherTags.has(cleanEarTag(a.earTag)));
+  const kaelber = unreg.filter(isKalb);
+  const term = search.trim().toLowerCase();
+  const matches = (a) =>
+    !term ||
+    cleanEarTag(a.earTag || "").toLowerCase().includes(term.replace(/\s/g, "")) ||
+    (a.name || "").toLowerCase().includes(term);
+  const base = reiter === "muetter" ? muetter : reiter === "vaeter" ? vaeter : reiter === "kaelber" ? kaelber : unreg;
+  const list = base.filter(matches).sort((x, y) => (cleanEarTag(x.earTag) < cleanEarTag(y.earTag) ? -1 : 1));
+
+  const Tile = ({ id, label, value }) => (
+    <button
+      type="button"
+      onClick={() => setReiter(id)}
+      className="h-[68px] bg-white text-[#2B2A26] border border-[#D9CFB8] rounded-lg px-1 py-2 flex flex-col items-center justify-center text-center transition overflow-hidden"
+      style={reiter === id ? { boxShadow: "0 0 0 2px #2B2A26 inset" } : undefined}
+    >
+      <p className="text-[10px] uppercase tracking-wide text-[#6B6858] truncate w-full">{label}</p>
+      <p className="font-slab font-bold" style={{ fontSize: "20px", lineHeight: "1.2", fontVariantNumeric: "tabular-nums", fontFamily: "'Arvo', serif" }}>
+        {value}
+      </p>
+    </button>
+  );
+
+  const saveNew = () => {
+    const clean = cleanEarTag(newTag);
+    if (!isValidEarTag(clean)) {
+      setAddError("Bitte eine gültige Ohrmarke eingeben (2 Buchstaben + 10 Ziffern, z. B. DE 08 123 45678).");
+      return;
+    }
+    if (animals.some((a) => sameEarTag(a.earTag, clean))) {
+      setAddError("Diese Ohrmarke gibt es bereits.");
+      return;
+    }
+    onCreateUnregistered(clean, newGender);
+    setNewTag("");
+    setAddError("");
+    setAddOpen(false);
+  };
+
+  return (
+    <div className="fixed inset-0 z-30 overflow-y-auto" style={{ backgroundColor: "#F9EFE4" }}>
+      <header className="border-b border-[#D9CFB8] px-5 pt-6 pb-4" style={{ backgroundColor: "#F9EFE4" }}>
+        <p className="text-xs uppercase tracking-[0.2em] text-[#6B6858] mb-1">Übersicht</p>
+        <h1 className="font-slab text-2xl font-bold text-[#2B2A26]">Unregistrierte Ohrenmarken</h1>
+
+        <div className="grid grid-cols-4 gap-2 mt-4">
+          <Tile id="gesamt" label="Gesamt" value={unreg.length} />
+          <Tile id="muetter" label="Mütter" value={muetter.length} />
+          <Tile id="vaeter" label="Väter" value={vaeter.length} />
+          <Tile id="kaelber" label="Kälber" value={kaelber.length} />
+        </div>
+
+        <input
+          type="text"
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          placeholder="Suche nach Ohrmarke oder Name…"
+          className="w-full mt-4 px-3 py-2 rounded-lg border border-[#D9CFB8] bg-white text-[#2B2A26] text-sm focus:outline-none focus:ring-2 focus:ring-[#4C6B3F]"
+        />
+
+        <div className="flex items-center justify-between gap-2 mt-3 flex-wrap">
+          <p className="text-[11px] text-[#8A8672]">Zum Sortieren auf eine Spaltenüberschrift tippen</p>
+          <div className="flex items-center justify-end gap-2 shrink-0 ml-auto">
+            {isAdmin && (
+              <button
+                type="button"
+                onClick={() => {
+                  setNewTag("");
+                  setAddError("");
+                  setAddOpen(true);
+                }}
+                className="p-1.5 rounded-lg bg-white border border-[#D9CFB8] text-[#2B2A26]"
+                aria-label="Unregistrierte Ohrmarke hinzufügen"
+              >
+                <Plus size={16} />
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={() => {
+                setSearch("");
+                onBack();
+              }}
+              className="text-xs font-semibold rounded-lg px-3 py-1.5 transition whitespace-nowrap"
+              style={{ color: "#FFFFFF", backgroundColor: "#2B2A26", border: "1px solid #2B2A26" }}
+            >
+              Zurück
+            </button>
+          </div>
+        </div>
+      </header>
+
+      <div className="px-5 py-4 pb-10">
+        <SectionTable
+          key={reiter}
+          title={reiter === "muetter" ? "Mütter" : reiter === "vaeter" ? "Väter" : reiter === "kaelber" ? "Kälber" : "Alle unregistrierten Ohrenmarken"}
+          color={colorForCategory("Unregistriert")}
+          animals={list}
+          showNachkommen
+          onOpenAnimal={onOpenAnimal}
+        />
+        <p className="text-[11px] text-[#8A8672] -mt-3">
+          Mütter/Väter = bei mindestens einem Tier als Mutter bzw. Vater eingetragen · Kälber = bei keinem Tier als Elternteil eingetragen.
+          Ein Tier wird registriert, indem es im Rinderpass über „Bearbeiten“ vervollständigt oder mit derselben Ohrmarke neu angelegt wird.
+        </p>
+      </div>
+
+      {addOpen && (
+        <div
+          className="fixed inset-0 z-40 flex items-end sm:items-center justify-center"
+          style={{ position: "fixed", top: 0, right: 0, bottom: 0, left: 0, backgroundColor: "rgba(0,0,0,0.4)" }}
+          onClick={() => setAddOpen(false)}
+        >
+          <div onClick={(e) => e.stopPropagation()} className="w-full sm:max-w-sm bg-white rounded-t-2xl sm:rounded-2xl border border-[#D9CFB8] p-5 pb-6">
+            <div className="flex items-center justify-between mb-3">
+              <h2 className="font-slab text-lg font-bold text-[#2B2A26]">Ohrmarke hinzufügen</h2>
+              <button type="button" onClick={() => setAddOpen(false)} className="p-1 text-[#8A8672] hover:text-[#2B2A26]" aria-label="Schließen">
+                <X size={20} />
+              </button>
+            </div>
+            <label className="block text-xs font-semibold uppercase tracking-wide text-[#6B6858] mb-1">Ohrmarke</label>
+            <input
+              type="text"
+              value={liveFormatEarTag(newTag)}
+              onChange={(e) => {
+                setNewTag(e.target.value);
+                setAddError("");
+              }}
+              placeholder="z. B. DE 08 123 45678"
+              className="w-full mb-3 px-3 py-2 rounded-lg border bg-white text-[#2B2A26] text-sm"
+              style={{ borderColor: addError ? "#BB201D" : "#9CA3AF" }}
+            />
+            <label className="block text-xs font-semibold uppercase tracking-wide text-[#6B6858] mb-1">Geschlecht</label>
+            <div className="flex gap-2 mb-3">
+              {[
+                ["weiblich", "weiblich"],
+                ["männlich", "männlich"],
+              ].map(([v, l]) => (
+                <button
+                  key={v}
+                  type="button"
+                  onClick={() => setNewGender(v)}
+                  className="flex-1 py-2 rounded-lg border text-sm font-semibold"
+                  style={newGender === v ? { backgroundColor: "#2B2A26", color: "#FFFFFF", borderColor: "#2B2A26" } : { borderColor: "#D9CFB8", color: "#2B2A26" }}
+                >
+                  {l}
+                </button>
+              ))}
+            </div>
+            {addError && <p className="text-[#BB201D] text-sm mb-3">{addError}</p>}
+            <button type="button" onClick={saveNew} className="w-full py-2.5 rounded-lg font-semibold" style={{ backgroundColor: "#2B2A26", color: "#FFFFFF" }}>
+              Speichern
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function StaelleView({ onBack }) {
   const isAdmin = useContext(AppModeContext) === "admin";
   const [staelle, setStaelle] = useState([]);
@@ -6233,6 +6419,7 @@ function RinderbestandApp() {
     <CowStatsContext.Provider value={cowStats}>
     <BullStatsContext.Provider value={bullStats}>
     <BullsContext.Provider value={bullsList}>
+    <AllAnimalsContext.Provider value={animals}>
     <div className="min-h-screen font-sans" style={{ backgroundColor: "#F9EFE4" }}>
 
       <header
@@ -6552,14 +6739,7 @@ function RinderbestandApp() {
                   />
                 ))
               : listView === "Unregistriert"
-              ? (
-                  <SectionTable
-                    title="Unregistrierte Ohrenmarken"
-                    color={colorForCategory("Unregistriert")}
-                    animals={sorted.filter((a) => a.category === "Unregistriert")}
-                    onOpenAnimal={(a) => setPassAnimal(a)}
-                  />
-                )
+              ? null
               : listView === "Abgänge"
               ? null
               : (
@@ -7061,6 +7241,15 @@ function RinderbestandApp() {
 
       {staelleOpen && <StaelleView onBack={() => setStaelleOpen(false)} />}
 
+      {listView === "Unregistriert" && (
+        <UnregistriertView
+          animals={animals}
+          onOpenAnimal={(a) => setPassAnimal(a)}
+          onBack={() => setListView(null)}
+          onCreateUnregistered={handleCreateUnregistered}
+        />
+      )}
+
       {listView === "Abgänge" && (
         <AbgaengeView
           animals={animals}
@@ -7263,6 +7452,7 @@ function RinderbestandApp() {
         </div>
       )}
     </div>
+    </AllAnimalsContext.Provider>
     </BullsContext.Provider>
     </BullStatsContext.Provider>
     </CowStatsContext.Provider>
