@@ -6241,6 +6241,228 @@ function BetriebeView({ animals, onBack, onOpenAnimal }) {
   );
 }
 
+// ===== Jahresübersicht =====
+const JAHR_KENNZAHLEN = [
+  { key: "bestand", label: "Tiere im Bestand", group: "Bestand am Stichtag" },
+  { key: "mutterkuehe", label: "Mutterkühe", group: "Bestand am Stichtag" },
+  { key: "kaelber", label: "Kälber", group: "Bestand am Stichtag" },
+  { key: "jungrinder", label: "Jungrinder", group: "Bestand am Stichtag" },
+  { key: "deckbullen", label: "Deckbullen", group: "Bestand am Stichtag" },
+  { key: "geboren", label: "Kälber geboren", group: "Im Jahr" },
+  { key: "gekalbt", label: "Kühe gekalbt", group: "Im Jahr" },
+  { key: "neueMutterkuehe", label: "Neue Mutterkühe", group: "Im Jahr" },
+  { key: "zugekauft", label: "Tiere zugekauft", group: "Im Jahr" },
+  { key: "zugekauftWeiblich", label: "davon weiblich", group: "Im Jahr" },
+  { key: "verkauft", label: "Tiere verkauft", group: "Im Jahr" },
+  { key: "verendet", label: "Tiere verendet", group: "Im Jahr" },
+];
+
+// Zugangsdatum eines Tieres in den Betrieb (Zukauf/Ersterfassung: Zugangsdatum, sonst Geburt)
+function zugangsDatum(a) {
+  const z = a.hitZugang || {};
+  if (z.art && z.art !== "GE" && z.art !== "ER" && z.art !== "FG" && z.datum) return z.datum;
+  return a.birthDate || z.datum || "";
+}
+
+// Kennzahlen für ein Jahr. stichtag = "JJJJ-12-31" bzw. heute für das laufende Jahr.
+function jahresKennzahlen(animals, jahr, stichtag, kidsByMother) {
+  const von = `${jahr}-01-01`;
+  const bis = stichtag;
+  const inJahr = (d) => !!d && d >= von && d <= bis;
+  const herde = animals.filter((a) => a.category !== "Unregistriert" && !(a.hitZugang && a.hitZugang.art === "FG"));
+  const r = { bestand: 0, mutterkuehe: 0, kaelber: 0, jungrinder: 0, deckbullen: 0 };
+
+  herde.forEach((a) => {
+    const zu = zugangsDatum(a);
+    if (!zu || zu > bis) return;
+    if (a.category === "Abgänge" && a.abgangsDatum && a.abgangsDatum <= bis) return;
+    // Abschnitt am Stichtag bestimmen
+    const months = getAgeMonths(a.birthDate, bis);
+    const kids = kidsByMother[cleanEarTag(a.earTag)] || [];
+    const hatGekalbt = kids.some((k) => k.birthDate && k.birthDate <= bis) || Number(a.kalbungenVorKauf) > 0;
+    const warBulle = a.category === "Deckbullen" || a.originalCategory === "Deckbullen";
+    let abschnitt;
+    if (a.gender === "weiblich") {
+      const warMutterkuh = (a.category === "Mutterkühe" || a.originalCategory === "Mutterkühe") && kids.length === 0;
+      abschnitt = hatGekalbt || warMutterkuh ? "mutterkuehe" : months !== null && months < 8 ? "kaelber" : "jungrinder";
+    } else {
+      abschnitt = warBulle && months !== null && months >= 12 ? "deckbullen" : "kaelber";
+    }
+    r[abschnitt]++;
+    r.bestand++;
+  });
+
+  // Ereignisse im Jahr
+  const imBetriebGeboren = (a) => !a.hitZugang || !a.hitZugang.art || a.hitZugang.art === "GE";
+  const geboren = herde.filter((a) => imBetriebGeboren(a) && inJahr(a.birthDate));
+  r.geboren = geboren.length;
+  r.gekalbt = new Set(geboren.map((k) => cleanEarTag(k.motherEarTag)).filter(Boolean)).size;
+  const neue = new Set();
+  Object.entries(kidsByMother).forEach(([mother, kids]) => {
+    const first = kids.map((k) => k.birthDate).filter(Boolean).sort()[0];
+    const cow = animals.find((x) => cleanEarTag(x.earTag) === mother);
+    if (first && inJahr(first) && !(cow && Number(cow.kalbungenVorKauf) > 0)) neue.add(mother);
+  });
+  animals.forEach((a) => {
+    (a.history || []).forEach((ev) => {
+      if (ev.type === "umgestallt" && ev.nach === "Mutterkühe" && inJahr(ev.date)) neue.add(cleanEarTag(a.earTag) || a.id);
+    });
+  });
+  r.neueMutterkuehe = neue.size;
+  const zugekauft = herde.filter((a) => a.hitZugang && a.hitZugang.art === "ZU" && inJahr(a.hitZugang.datum));
+  r.zugekauft = zugekauft.length;
+  r.zugekauftWeiblich = zugekauft.filter((a) => a.gender === "weiblich").length;
+  r.verkauft = herde.filter((a) => a.category === "Abgänge" && a.abgangsGrund === "verkauft" && inJahr(a.abgangsDatum)).length;
+  r.verendet = herde.filter((a) => a.category === "Abgänge" && a.abgangsGrund === "verendet" && inJahr(a.abgangsDatum)).length;
+  return r;
+}
+
+function JahresuebersichtView({ animals, onBack }) {
+  const [reiter, setReiter] = useState("aktuell"); // aktuell | vergangen
+  const heute = isoDateKey(new Date());
+  const aktJahr = new Date().getFullYear();
+
+  const daten = useMemo(() => {
+    const kidsByMother = {};
+    animals.forEach((a) => {
+      const m = cleanEarTag(a.motherEarTag);
+      if (m) (kidsByMother[m] = kidsByMother[m] || []).push(a);
+    });
+    const jahre = animals
+      .map((a) => (a.hitZugang && a.hitZugang.datum) || zugangsDatum(a))
+      .filter(Boolean)
+      .map((d) => Number(d.slice(0, 4)));
+    const start = jahre.length ? Math.min(...jahre) : aktJahr;
+    const rows = [];
+    for (let j = aktJahr; j >= start; j--) {
+      const stichtag = j === aktJahr ? heute : `${j}-12-31`;
+      rows.push({ jahr: j, ...jahresKennzahlen(animals, j, stichtag, kidsByMother) });
+    }
+    return rows;
+  }, [animals]);
+
+  const aktuell = daten[0];
+  const vorjahr = daten[1];
+  const vergangen = daten.slice(1);
+  const getValue = useCallback((row, key) => row[key], []);
+  const { sorted, th } = useTableSort(vergangen, getValue);
+
+  const Tile = ({ id, label, value }) => (
+    <button
+      type="button"
+      onClick={() => setReiter(id)}
+      className="h-[68px] bg-white text-[#2B2A26] border border-[#D9CFB8] rounded-lg px-1 py-2 flex flex-col items-center justify-center text-center transition overflow-hidden"
+      style={reiter === id ? { boxShadow: "0 0 0 2px #2B2A26 inset" } : undefined}
+    >
+      <p className="text-[10px] uppercase tracking-wide text-[#6B6858] truncate w-full">{label}</p>
+      <p className="font-slab font-bold" style={{ fontSize: "20px", lineHeight: "1.2", fontVariantNumeric: "tabular-nums", fontFamily: "'Arvo', serif" }}>
+        {value}
+      </p>
+    </button>
+  );
+  const diff = (a, b) => {
+    if (b === undefined) return "";
+    const d = a - b;
+    return d === 0 ? "±0" : d > 0 ? `+${d}` : String(d);
+  };
+
+  return (
+    <div className="fixed inset-0 z-30 overflow-y-auto" style={{ backgroundColor: "#F9EFE4" }}>
+      <header className="border-b border-[#D9CFB8] px-5 pt-6 pb-4" style={{ backgroundColor: "#F9EFE4" }}>
+        <p className="text-xs uppercase tracking-[0.2em] text-[#6B6858] mb-1">Übersicht</p>
+        <h1 className="font-slab text-2xl font-bold text-[#2B2A26]">Jahresübersicht</h1>
+
+        <div className="grid grid-cols-2 gap-2 mt-4">
+          <Tile id="aktuell" label="Aktuelles Jahr" value={aktJahr} />
+          <Tile id="vergangen" label="Vergangene Jahre" value={vergangen.length} />
+        </div>
+
+        <div className="flex items-center justify-between gap-2 mt-3 flex-wrap">
+          <p className="text-[11px] text-[#8A8672]">
+            {reiter === "aktuell" ? `Stand heute (${formatDate(heute)}) im Vergleich zum ganzen Vorjahr` : "Bestand jeweils am 31.12. · zum Sortieren auf eine Spaltenüberschrift tippen"}
+          </p>
+          <div className="flex items-center justify-end gap-2 shrink-0 ml-auto">
+            <button
+              type="button"
+              onClick={onBack}
+              className="text-xs font-semibold rounded-lg px-3 py-1.5 transition whitespace-nowrap"
+              style={{ color: "#FFFFFF", backgroundColor: "#2B2A26", border: "1px solid #2B2A26" }}
+            >
+              Zurück
+            </button>
+          </div>
+        </div>
+      </header>
+
+      <div className="px-5 py-4 pb-10">
+        {reiter === "aktuell" ? (
+          <div className="rounded-xl border border-[#D9CFB8] bg-white overflow-x-auto">
+            <table className="w-full text-[13px]" style={{ borderCollapse: "separate", borderSpacing: 0 }}>
+              <thead>
+                <tr className="bg-white text-[#6B6858] text-[11px] uppercase tracking-wide">
+                  <th className="text-left font-semibold px-3 py-2"></th>
+                  <th className="text-right font-semibold px-3 py-2">{aktJahr} bis heute</th>
+                  {vorjahr && <th className="text-right font-semibold px-3 py-2">{vorjahr.jahr} gesamt</th>}
+                  {vorjahr && <th className="text-right font-semibold px-3 py-2">Unterschied</th>}
+                </tr>
+              </thead>
+              <tbody>
+                {JAHR_KENNZAHLEN.map((k, i) => {
+                  const neueGruppe = i === 0 || JAHR_KENNZAHLEN[i - 1].group !== k.group;
+                  return (
+                    <React.Fragment key={k.key}>
+                      {neueGruppe && (
+                        <tr>
+                          <td colSpan={4} className="px-3 pt-3 pb-1 text-[11px] font-semibold uppercase tracking-wide text-[#6B6858] border-t border-[#D9CFB8]" style={{ backgroundColor: "#F9EFE4" }}>
+                            {k.group === "Bestand am Stichtag" ? "Bestand (heute bzw. 31.12. des Vorjahres)" : "Ereignisse im Jahr"}
+                          </td>
+                        </tr>
+                      )}
+                      <tr className="border-t border-[#F9EFE4]">
+                        <td className={`px-3 py-2 text-[#2B2A26] ${k.key === "zugekauftWeiblich" ? "pl-6 text-[#6B6858]" : ""}`}>{k.label}</td>
+                        <td className="px-3 py-2 text-right font-semibold text-[#2B2A26]" style={{ fontVariantNumeric: "tabular-nums" }}>{aktuell[k.key]}</td>
+                        {vorjahr && <td className="px-3 py-2 text-right text-[#2B2A26]" style={{ fontVariantNumeric: "tabular-nums" }}>{vorjahr[k.key]}</td>}
+                        {vorjahr && <td className="px-3 py-2 text-right text-[#6B6858]" style={{ fontVariantNumeric: "tabular-nums" }}>{diff(aktuell[k.key], vorjahr[k.key])}</td>}
+                      </tr>
+                    </React.Fragment>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        ) : vergangen.length === 0 ? (
+          <p className="text-sm text-[#B0A98F] italic px-0.5">Noch keine vergangenen Jahre mit Daten.</p>
+        ) : (
+          <div className="rounded-xl border border-[#D9CFB8] bg-white overflow-x-auto">
+            <table className="w-full text-[13px]" style={{ borderCollapse: "separate", borderSpacing: 0, minWidth: 1100 }}>
+              <thead>
+                <tr className="bg-white text-[#6B6858] text-[11px] uppercase tracking-wide">
+                  {th("jahr", "Jahr")}
+                  {JAHR_KENNZAHLEN.map((k) => th(k.key, k.key === "zugekauftWeiblich" ? "davon weibl." : k.label))}
+                </tr>
+              </thead>
+              <tbody>
+                {sorted.map((row) => (
+                  <tr key={row.jahr} className="border-t border-[#F9EFE4]">
+                    <td className="px-3 py-2 font-slab font-bold text-[#2B2A26]">{row.jahr}</td>
+                    {JAHR_KENNZAHLEN.map((k) => (
+                      <td key={k.key} className="px-3 py-2 text-[#2B2A26]" style={{ fontVariantNumeric: "tabular-nums" }}>{row[k.key]}</td>
+                    ))}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+        <p className="text-[11px] text-[#8A8672] mt-2">
+          Abschnitt am Stichtag wird berechnet: Kuh mit Kalb = Mutterkuh, weiblich unter 8 Monaten = Kalb, sonst Jungrind; männlich = Kalb bzw. Deckbulle ab 12 Monaten.
+          Neue Mutterkühe = Erstkalbung im Jahr oder in dem Jahr zu den Mutterkühen verschoben. Kälber vom Vorbetrieb zählen nicht als geboren.
+        </p>
+      </div>
+    </div>
+  );
+}
+
 function StaelleView({ onBack }) {
   const isAdmin = useContext(AppModeContext) === "admin";
   const [staelle, setStaelle] = useState([]);
@@ -6663,6 +6885,7 @@ function RinderbestandApp() {
   const [stammbaumOpen, setStammbaumOpen] = useState(false);
   const [staelleOpen, setStaelleOpen] = useState(false);
   const [betriebeOpen, setBetriebeOpen] = useState(false);
+  const [jahresOpen, setJahresOpen] = useState(false);
   const [brunstlisteOpen, setBrunstlisteOpen] = useState(false);
   const [mainMenuOpen, setMainMenuOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -7006,6 +7229,7 @@ function RinderbestandApp() {
     if (brunstlisteOpen) return "#/brunstliste";
     if (staelleOpen) return "#/staelle";
     if (betriebeOpen) return "#/betriebe";
+    if (jahresOpen) return "#/jahresuebersicht";
     if (stammbaumOpen) return "#/stammbaum";
     if (stallbuchAnimal) return `#/tier/${rid(stallbuchAnimal)}/stallbuch`;
     if (historieAnimal) return `#/tier/${rid(historieAnimal)}/historie/${encodeURIComponent(historieTab)}`;
@@ -7037,6 +7261,7 @@ function RinderbestandApp() {
     setStammbaumOpen(false);
     setStaelleOpen(false);
     setBetriebeOpen(false);
+    setJahresOpen(false);
     setBrunstlisteOpen(false);
     setFormOpen(false);
     setEditing(null);
@@ -7059,6 +7284,7 @@ function RinderbestandApp() {
     if (p0 === "stammbaum") return setStammbaumOpen(true);
     if (p0 === "staelle") return setStaelleOpen(true);
     if (p0 === "betriebe") return setBetriebeOpen(true);
+    if (p0 === "jahresuebersicht") return setJahresOpen(true);
     if (p0 === "brunstliste") return setBrunstlisteOpen(true);
     if (p0 === "neu") {
       if (!isAdmin) return;
@@ -7356,6 +7582,15 @@ function RinderbestandApp() {
                   </span>
                 </span>
                 <ChevronRight size={18} style={{ color: colorForCategory("Abgänge").fg }} />
+              </button>
+              <button
+                type="button"
+                onClick={() => setJahresOpen(true)}
+                className="w-full rounded-xl border px-4 py-3 flex items-center justify-between transition"
+                style={{ backgroundColor: "#FFFFFF", borderColor: "#D9CFB8" }}
+              >
+                <span className="font-slab text-sm font-bold text-[#2B2A26]">Jahresübersicht</span>
+                <ChevronRight size={18} style={{ color: "#2B2A26" }} />
               </button>
               <button
                 type="button"
@@ -8040,6 +8275,8 @@ function RinderbestandApp() {
       )}
 
       {staelleOpen && <StaelleView onBack={() => setStaelleOpen(false)} />}
+
+      {jahresOpen && <JahresuebersichtView animals={animals} onBack={() => setJahresOpen(false)} />}
 
       {betriebeOpen && (
         <BetriebeView animals={animals} onBack={() => setBetriebeOpen(false)} onOpenAnimal={(a) => setPassAnimal(a)} />
