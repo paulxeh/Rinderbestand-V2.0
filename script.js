@@ -8436,7 +8436,7 @@ function LoginScreen({ error: initialError }) {
           <TagIcon size={14} />
           <span>Bestandsbuch</span>
         </div>
-        <h1 className="font-slab text-2xl font-bold text-[#2B2A26] mb-4">Rinderbestand</h1>
+        <h1 className="font-slab text-2xl font-bold text-[#2B2A26] mb-4">Rinderbestandsregister</h1>
         <form
           onSubmit={(e) => {
             e.preventDefault();
