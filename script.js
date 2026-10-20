@@ -6641,6 +6641,19 @@ function RinderbestandApp() {
   const [moveFlowOpen, setMoveFlowOpen] = useState(false);
   const [moveFlowAnimal, setMoveFlowAnimal] = useState(null);
   const [exportOpen, setExportOpen] = useState(false);
+  const [exportBetriebe, setExportBetriebe] = useState([]);
+  useEffect(() => {
+    if (!exportOpen) return;
+    (async () => {
+      try {
+        const res = await window.storage.get(BETRIEBE_KEY, false);
+        setExportBetriebe(res?.value ? JSON.parse(res.value) : []);
+      } catch (e) {
+        setExportBetriebe([]);
+      }
+    })();
+  }, [exportOpen]);
+  const exportText = () => JSON.stringify({ format: "rinderbestand", version: 2, animals, betriebe: exportBetriebe }, null, 2);
   const [importOpen, setImportOpen] = useState(false);
   const [importText, setImportText] = useState("");
   const [importError, setImportError] = useState("");
@@ -6817,12 +6830,22 @@ function RinderbestandApp() {
         return;
       }
     }
+    // Neues Format: { animals: [...], betriebe: [...] } – altes Format: nur die Liste der Tiere
+    let importBetriebe = null;
+    if (parsed && !Array.isArray(parsed) && Array.isArray(parsed.animals)) {
+      if (Array.isArray(parsed.betriebe)) importBetriebe = parsed.betriebe;
+      parsed = parsed.animals;
+    }
     if (!Array.isArray(parsed)) {
       setImportError("Die Daten müssen eine Liste von Tieren sein.");
       return;
     }
     const withIds = parsed.map((a) => ({ ...a, id: a.id || generateId() }));
     persist(withIds);
+    if (importBetriebe) {
+      const list = importBetriebe.map((b) => ({ ...b, id: b.id || generateId() }));
+      window.storage.set(BETRIEBE_KEY, JSON.stringify(list), false).catch(() => {});
+    }
     setImportError("");
     setImportOpen(false);
   };
@@ -8000,7 +8023,7 @@ function RinderbestandApp() {
             </p>
             <textarea
               readOnly
-              value={JSON.stringify(animals, null, 2)}
+              value={exportText()}
               rows={12}
               className="w-full mb-3 px-3 py-2 rounded-lg border bg-white text-[#2B2A26] text-xs font-mono focus:outline-none"
               style={{ borderColor: "#9CA3AF" }}
@@ -8011,7 +8034,7 @@ function RinderbestandApp() {
                 type="button"
                 onClick={async () => {
                   try {
-                    await navigator.clipboard.writeText(JSON.stringify(animals, null, 2));
+                    await navigator.clipboard.writeText(exportText());
                     setImportCopyOk(true);
                     setTimeout(() => setImportCopyOk(false), 2000);
                   } catch (e) {
@@ -8028,7 +8051,7 @@ function RinderbestandApp() {
             <button
               type="button"
               onClick={() => {
-                const blob = new Blob([JSON.stringify(animals, null, 2)], { type: "text/plain" });
+                const blob = new Blob([exportText()], { type: "text/plain" });
                 const url = URL.createObjectURL(blob);
                 const a = document.createElement("a");
                 a.href = url;
