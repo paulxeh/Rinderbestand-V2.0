@@ -1417,7 +1417,7 @@ function moveOptions(animal) {
   if (animal.category === "Mutterkühe") return ["Abgänge"];
   if (animal.category === "Deckbullen") return ["Abgänge"];
   if (animal.category === "Kälber") {
-    return animal.gender === "weiblich" ? ["Abgänge", "Jungrinder"] : ["Abgänge"];
+    return animal.gender === "weiblich" ? ["Abgänge", "Jungrinder"] : ["Abgänge", "Deckbullen"];
   }
   if (animal.category === "Jungrinder") return ["Abgänge", "Mutterkühe"];
   if (animal.category === "Unregistriert") return [...CATEGORIES, "Abgänge"];
@@ -6264,6 +6264,15 @@ function zugangsDatum(a) {
   return a.birthDate || z.datum || "";
 }
 
+// Seit wann ist ein Tier Deckbulle? Nur wenn es als Deckbulle angelegt oder selbst dorthin verschoben wurde.
+function deckbulleSeit(a) {
+  const ev = (a.history || []).find((e) => e.type === "umgestallt" && e.nach === "Deckbullen" && e.date);
+  if (ev) return ev.date;
+  // als Deckbulle angelegt: ab Zugang (Geburt bzw. Zukauf)
+  if (a.category === "Deckbullen" || a.originalCategory === "Deckbullen") return zugangsDatum(a);
+  return null;
+}
+
 // Kennzahlen für ein Jahr. stichtag = "JJJJ-12-31" bzw. heute für das laufende Jahr.
 function jahresKennzahlen(animals, jahr, stichtag, kidsByMother) {
   const von = `${jahr}-01-01`;
@@ -6280,13 +6289,13 @@ function jahresKennzahlen(animals, jahr, stichtag, kidsByMother) {
     const months = getAgeMonths(a.birthDate, bis);
     const kids = kidsByMother[cleanEarTag(a.earTag)] || [];
     const hatGekalbt = kids.some((k) => k.birthDate && k.birthDate <= bis) || Number(a.kalbungenVorKauf) > 0;
-    const warBulle = a.category === "Deckbullen" || a.originalCategory === "Deckbullen";
+    const bulleSeit = deckbulleSeit(a);
     let abschnitt;
     if (a.gender === "weiblich") {
       const warMutterkuh = (a.category === "Mutterkühe" || a.originalCategory === "Mutterkühe") && kids.length === 0;
       abschnitt = hatGekalbt || warMutterkuh ? "mutterkuehe" : months !== null && months < 8 ? "kaelber" : "jungrinder";
     } else {
-      abschnitt = warBulle && months !== null && months >= 12 ? "deckbullen" : "kaelber";
+      abschnitt = bulleSeit && bulleSeit <= bis ? "deckbullen" : "kaelber";
     }
     r[abschnitt]++;
     r.bestand++;
@@ -6455,7 +6464,7 @@ function JahresuebersichtView({ animals, onBack }) {
           </div>
         )}
         <p className="text-[11px] text-[#8A8672] mt-2">
-          Abschnitt am Stichtag wird berechnet: Kuh mit Kalb = Mutterkuh, weiblich unter 8 Monaten = Kalb, sonst Jungrind; männlich = Kalb bzw. Deckbulle ab 12 Monaten.
+          Abschnitt am Stichtag wird berechnet: Kuh mit Kalb = Mutterkuh, weiblich unter 8 Monaten = Kalb, sonst Jungrind; männlich = Kalb, Deckbulle erst ab dem Tag, an dem es als Deckbulle angelegt oder dorthin verschoben wurde.
           Neue Mutterkühe = Erstkalbung im Jahr oder in dem Jahr zu den Mutterkühen verschoben. Kälber vom Vorbetrieb zählen nicht als geboren.
         </p>
       </div>
