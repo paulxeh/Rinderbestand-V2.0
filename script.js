@@ -4831,35 +4831,6 @@ function AnimalsByStallView({ animals, color, onOpenAnimal, showParents, showGen
   );
 }
 
-function BrunstVorschauCard({ animals, onOpenAnimal, onUpdateAnimal, addHistoryEvent, onOpenHistory, onShowAll, onOpenAddCalf }) {
-  const withDate = animals.filter((a) => a.lastHeatDate);
-  withDate.sort((a, b) => nextExpectedHeat(a) - nextExpectedHeat(b));
-  const top3 = withDate.slice(0, 3);
-
-  return (
-    <section className="mb-4 rounded-xl border border-[#D9CFB8] bg-white p-3">
-      <p className="font-slab text-sm font-bold text-[#2B2A26] mb-1">Brunstliste</p>
-      <p className="text-xs mb-2" style={{ color: "#8A8672" }}>
-        Zeigt die 3 Kühe mit der am nächsten bevorstehenden Brunst.
-      </p>
-      {top3.length === 0 ? (
-        <p className="text-sm text-center py-6" style={{ color: "#B0A98F" }}>
-          Noch keine Brunst eingetragen.
-        </p>
-      ) : (
-        <div className="flex flex-col gap-2">
-          {top3.map((a) => (
-            <BreedingRow key={a.id} animal={a} onOpenAnimal={onOpenAnimal} onUpdateAnimal={onUpdateAnimal} addHistoryEvent={addHistoryEvent} onOpenHistory={onOpenHistory} onOpenAddCalf={onOpenAddCalf} />
-          ))}
-        </div>
-      )}
-      <button type="button" onClick={onShowAll} className="mt-2.5 text-xs font-semibold rounded-lg px-2.5 py-1.5" style={{ backgroundColor: "#F9EFE4", color: "#6B6858" }}>
-        Gesamte Brunstliste anzeigen
-      </button>
-    </section>
-  );
-}
-
 function BrunstlisteView({ animals, onOpenAnimal, onUpdateAnimal, addHistoryEvent, onOpenHistory, onBack, onOpenAddCalf }) {
   const isAdmin = useContext(AppModeContext) === "admin";
   const [breedingSortBy, setBreedingSortBy] = useState("naechste-brunst");
@@ -7507,26 +7478,15 @@ function RinderbestandApp() {
                 setHistorieTab("brunsthistorie");
               }}
             />
-            <BrunstVorschauCard
-              animals={animals.filter((a) => a.category === "Mutterkühe" || a.category === "Jungrinder")}
-              onOpenAnimal={(a) => setPassAnimal(a)}
-              onUpdateAnimal={handleUpdateField}
-              addHistoryEvent={(animal, type, date, extra) => {
-                const history = Array.isArray(animal.history) ? animal.history : [];
-                handleUpdateField(animal.id, { history: [...history, { type, date, ...(extra || {}) }] });
-              }}
-              onOpenHistory={(a) => {
-                setHistorieAnimal(a);
-                setHistorieTab("brunsthistorie");
-              }}
-              onShowAll={() => setBrunstlisteOpen(true)}
-              onOpenAddCalf={(a) => {
-                setPresetCategory("Kälber");
-                setPresetMotherEarTag(a.earTag);
-                setEditing(null);
-                setFormOpen(true);
-              }}
-            />
+            <button
+              type="button"
+              onClick={() => setBrunstlisteOpen(true)}
+              className="w-full mb-2 rounded-xl border px-4 py-3 flex items-center justify-between transition"
+              style={{ backgroundColor: "#FFFFFF", borderColor: "#D9CFB8" }}
+            >
+              <span className="font-slab text-sm font-bold text-[#2B2A26]">Brunstliste</span>
+              <ChevronRight size={18} style={{ color: "#2B2A26" }} />
+            </button>
             <button
               type="button"
               onClick={() => setListView("Gesamt")}
@@ -7536,8 +7496,7 @@ function RinderbestandApp() {
               <span className="flex flex-col items-start">
                 <span className="font-slab text-sm font-bold text-[#2B2A26]">Aktueller Rinderbestand</span>
                 <span className="text-xs text-[#6B6858]">
-                  {animals.filter((a) => CATEGORIES.includes(a.category)).length} Tiere ·{" "}
-                  {CATEGORIES.map((c) => `${byCategory[c]?.length || 0} ${c}`).join(" · ")}
+                  {animals.filter((a) => CATEGORIES.includes(a.category)).length} Tiere
                 </span>
               </span>
               <ChevronRight size={18} style={{ color: "#2B2A26" }} />
