@@ -7478,130 +7478,32 @@ function RinderbestandApp() {
                 setHistorieTab("brunsthistorie");
               }}
             />
-            <button
-              type="button"
-              onClick={() => setBrunstlisteOpen(true)}
-              className="w-full mb-2 rounded-xl border px-4 py-3 flex items-center justify-between transition"
-              style={{ backgroundColor: "#FFFFFF", borderColor: "#D9CFB8" }}
-            >
-              <span className="font-slab text-sm font-bold text-[#2B2A26]">Brunstliste</span>
-              <ChevronRight size={18} style={{ color: "#2B2A26" }} />
-            </button>
-            <button
-              type="button"
-              onClick={() => setListView("Gesamt")}
-              className="w-full mb-2 rounded-xl border px-4 py-3 flex items-center justify-between transition"
-              style={{ backgroundColor: "#FFFFFF", borderColor: "#D9CFB8" }}
-            >
-              <span className="flex flex-col items-start">
-                <span className="font-slab text-sm font-bold text-[#2B2A26]">Aktueller Rinderbestand</span>
-                <span className="text-xs text-[#6B6858]">
-                  {animals.filter((a) => CATEGORIES.includes(a.category)).length} Tiere
-                </span>
-              </span>
-              <ChevronRight size={18} style={{ color: "#2B2A26" }} />
-            </button>
             <div className="flex flex-col gap-2 mb-6">
-              <button
-                type="button"
-                onClick={() => setStammbaumOpen(true)}
-                className="w-full rounded-xl border px-4 py-3 flex items-center justify-between transition"
-                style={{
-                  backgroundColor: colorForCategory("Stammbaum").bg,
-                  borderColor: colorForCategory("Stammbaum").bg,
-                }}
-              >
-                <span className="font-slab text-sm font-bold" style={{ color: colorForCategory("Stammbaum").fg }}>
-                  Stammbaum
-                </span>
-                <ChevronRight size={18} style={{ color: colorForCategory("Stammbaum").fg }} />
-              </button>
-              <button
-                type="button"
-                onClick={() => setStaelleOpen(true)}
-                className="w-full rounded-xl border px-4 py-3 flex items-center justify-between transition"
-                style={{
-                  backgroundColor: colorForCategory("Ställe").bg,
-                  borderColor: "#D9CFB8",
-                }}
-              >
-                <span className="font-slab text-sm font-bold" style={{ color: colorForCategory("Ställe").fg }}>
-                  Ställe
-                </span>
-                <ChevronRight size={18} style={{ color: colorForCategory("Ställe").fg }} />
-              </button>
-              <button
-                type="button"
-                onClick={() => setBetriebeOpen(true)}
-                className="w-full rounded-xl border px-4 py-3 flex items-center justify-between transition"
-                style={{
-                  backgroundColor: colorForCategory("Ställe").bg,
-                  borderColor: "#D9CFB8",
-                }}
-              >
-                <span className="font-slab text-sm font-bold" style={{ color: colorForCategory("Ställe").fg }}>
-                  Betriebe
-                </span>
-                <ChevronRight size={18} style={{ color: colorForCategory("Ställe").fg }} />
-              </button>
-              <button
-                type="button"
-                onClick={() => setListView("Abgänge")}
-                className="w-full rounded-xl border px-4 py-3 flex items-center justify-between transition"
-                style={{ backgroundColor: colorForCategory("Abgänge").bg, borderColor: colorForCategory("Abgänge").bg }}
-              >
-                <span className="flex flex-col items-start">
-                  <span className="font-slab text-sm font-bold" style={{ color: colorForCategory("Abgänge").fg }}>
-                    Abgänge
+              {[
+                { label: "Brunstliste", onClick: () => setBrunstlisteOpen(true) },
+                { label: "Aktueller Rinderbestand", sub: `${animals.filter((a) => CATEGORIES.includes(a.category)).length} Tiere`, onClick: () => setListView("Gesamt") },
+                { label: "Stammbaum", onClick: () => setStammbaumOpen(true) },
+                { label: "Ställe", onClick: () => setStaelleOpen(true) },
+                { label: "Betriebe", onClick: () => setBetriebeOpen(true) },
+                { label: "Abgänge", sub: `${animals.filter((a) => a.category === "Abgänge").length} Stück`, onClick: () => setListView("Abgänge") },
+                { label: "Jahresübersicht", onClick: () => setJahresOpen(true) },
+                { label: "Unregistrierte Tiere", sub: `${animals.filter((a) => a.category === "Unregistriert").length} Stück`, onClick: () => setListView("Unregistriert") },
+                { label: "Samenbank", onClick: () => {} },
+              ].map((item) => (
+                <button
+                  key={item.label}
+                  type="button"
+                  onClick={item.onClick}
+                  className="w-full h-[60px] rounded-xl border px-4 flex items-center justify-between transition"
+                  style={{ backgroundColor: "#FFFFFF", borderColor: "#D9CFB8" }}
+                >
+                  <span className="flex flex-col items-start">
+                    <span className="font-slab text-sm font-bold text-[#2B2A26]">{item.label}</span>
+                    {item.sub && <span className="text-xs text-[#6B6858]">{item.sub}</span>}
                   </span>
-                  <span className="text-xs opacity-80" style={{ color: colorForCategory("Abgänge").fg }}>
-                    {animals.filter((a) => a.category === "Abgänge").length} Stück
-                  </span>
-                </span>
-                <ChevronRight size={18} style={{ color: colorForCategory("Abgänge").fg }} />
-              </button>
-              <button
-                type="button"
-                onClick={() => setJahresOpen(true)}
-                className="w-full rounded-xl border px-4 py-3 flex items-center justify-between transition"
-                style={{ backgroundColor: "#FFFFFF", borderColor: "#D9CFB8" }}
-              >
-                <span className="font-slab text-sm font-bold text-[#2B2A26]">Jahresübersicht</span>
-                <ChevronRight size={18} style={{ color: "#2B2A26" }} />
-              </button>
-              <button
-                type="button"
-                onClick={() => setListView("Unregistriert")}
-                className="w-full rounded-xl border px-4 py-3 flex items-center justify-between transition"
-                style={{
-                  backgroundColor: colorForCategory("Unregistriert").bg,
-                  borderColor: colorForCategory("Unregistriert").bg,
-                }}
-              >
-                <span className="flex flex-col items-start">
-                  <span className="font-slab text-sm font-bold" style={{ color: colorForCategory("Unregistriert").fg }}>
-                    Unregistrierte Tiere
-                  </span>
-                  <span className="text-xs opacity-80" style={{ color: colorForCategory("Unregistriert").fg }}>
-                    {animals.filter((a) => a.category === "Unregistriert").length} Stück
-                  </span>
-                </span>
-                <ChevronRight size={18} style={{ color: colorForCategory("Unregistriert").fg }} />
-              </button>
-              <button
-                type="button"
-                onClick={() => {}}
-                className="w-full rounded-xl border px-4 py-3 flex items-center justify-between transition"
-                style={{
-                  backgroundColor: colorForCategory("Samenbank").bg,
-                  borderColor: colorForCategory("Samenbank").bg,
-                }}
-              >
-                <span className="font-slab text-sm font-bold" style={{ color: colorForCategory("Samenbank").fg }}>
-                  Samenbank
-                </span>
-                <ChevronRight size={18} style={{ color: colorForCategory("Samenbank").fg }} />
-              </button>
+                  <ChevronRight size={18} style={{ color: "#2B2A26" }} />
+                </button>
+              ))}
             </div>
           </>
         )}
