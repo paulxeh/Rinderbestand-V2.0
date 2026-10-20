@@ -831,7 +831,11 @@ function AnimalForm({ initial, initialCategory, initialMotherEarTag, registering
   const [herkunftArt, setHerkunftArt] = useState(initialZugang.art || "GE");
   const [vorbesitzer, setVorbesitzer] = useState(initialZugang.vorbesitzer || "");
   const [zugangDatum, setZugangDatum] = useState(initialZugang.art && initialZugang.art !== "GE" ? initialZugang.datum || "" : new Date().toISOString().slice(0, 10));
-  const betriebe = useMemo(() => collectBetriebe(allAnimals), [allAnimals]);
+  const { betriebe: gespeicherteBetriebe } = useBetriebe();
+  const betriebe = useMemo(
+    () => [...new Set([...gespeicherteBetriebe.filter((b) => b.typ !== "eigen").map(betriebLabel), ...collectBetriebe(allAnimals)])],
+    [allAnimals, gespeicherteBetriebe]
+  );
   const [error, setError] = useState("");
   const [invalidFields, setInvalidFields] = useState({});
   const [confirmingDelete, setConfirmingDelete] = useState(false);
@@ -2714,7 +2718,9 @@ function HistorieView({ animal, allAnimals, onBack, onOpenAnimal, initialTab, on
   );
 }
 
-function AbgangsFormular({ animal, onSave, onCancel, betriebe = [] }) {
+function AbgangsFormular({ animal, onSave, onCancel, betriebe: gesammelt = [] }) {
+  const { betriebe: gespeicherteBetriebe } = useBetriebe();
+  const betriebe = [...new Set([...gespeicherteBetriebe.filter((b) => b.typ !== "eigen").map(betriebLabel), ...gesammelt])];
   const [grund, setGrund] = useState("");
   const [datum, setDatum] = useState(isoDateKey(new Date()));
   const [todesursache, setTodesursache] = useState("");
@@ -5635,6 +5641,356 @@ function UnregistriertView({ animals, onOpenAnimal, onBack, onCreateUnregistered
   );
 }
 
+// ===== Betriebe (eigener Betrieb + Fremdbetriebe) =====
+const BETRIEBE_KEY = "cattle:betriebe";
+
+function useBetriebe() {
+  const [betriebe, setBetriebe] = useState([]);
+  const [loaded, setLoaded] = useState(false);
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      let list = [];
+      try {
+        const res = await window.storage.get(BETRIEBE_KEY, false);
+        if (res?.value) list = JSON.parse(res.value);
+      } catch (e) {
+        // noch keine Betriebe gespeichert
+      }
+      if (!cancelled) {
+        setBetriebe(Array.isArray(list) ? list : []);
+        setLoaded(true);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+  const save = async (next) => {
+    setBetriebe(next);
+    try {
+      await window.storage.set(BETRIEBE_KEY, JSON.stringify(next), false);
+    } catch (e) {}
+  };
+  return { betriebe, loaded, save };
+}
+
+function betriebLabel(b) {
+  return [b.nummer, b.name].filter(Boolean).join(" · ");
+}
+
+function normBetrieb(v) {
+  return String(v || "").toLowerCase().replace(/^betrieb\s+/, "").replace(/\s+/g, "");
+}
+
+// Passt ein eingetragener Text (Vorbesitzer / Abgang an) zu diesem Betrieb?
+function betriebMatches(b, text) {
+  const t = normBetrieb(text);
+  if (!t) return false;
+  const nr = normBetrieb(b.nummer);
+  const nm = normBetrieb(b.name);
+  return (nr && t.includes(nr)) || (nm && t.includes(nm));
+}
+
+function BetriebeView({ animals, onBack, onOpenAnimal }) {
+  const isAdmin = useContext(AppModeContext) === "admin";
+  const { betriebe, save } = useBetriebe();
+  const [reiter, setReiter] = useState("eigen"); // eigen | fremd
+  const [search, setSearch] = useState("");
+  const [edit, setEdit] = useState(null); // { id?, typ, name, nummer, ort, notiz }
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  const [detail, setDetail] = useState(null);
+
+  const eigene = betriebe.filter((b) => b.typ === "eigen");
+  const fremde = betriebe.filter((b) => b.typ !== "eigen");
+  const term = search.trim().toLowerCase();
+  const list = (reiter === "eigen" ? eigene : fremde)
+    .filter((b) => !term || [b.name, b.nummer, b.ort].some((v) => String(v || "").toLowerCase().includes(term)))
+    .sort((x, y) => (x.name || x.nummer || "").localeCompare(y.name || y.nummer || "", "de", { numeric: true }));
+
+  const zugaenge = (b) => animals.filter((a) => a.hitZugang && a.hitZugang.art !== "GE" && betriebMatches(b, a.hitZugang.vorbesitzer));
+  const abgaenge = (b) => animals.filter((a) => a.category === "Abgänge" && betriebMatches(b, a.verkauftAn));
+
+  const getValue = useCallback(
+    (b, key) => {
+      if (key === "zu") return zugaenge(b).length;
+      if (key === "ab") return abgaenge(b).length;
+      return b[key] || "";
+    },
+    [animals]
+  );
+  const { sorted, th } = useTableSort(list, getValue);
+
+  const saveEdit = () => {
+    if (!edit || (!edit.name.trim() && !edit.nummer.trim())) return;
+    const clean = { ...edit, name: edit.name.trim(), nummer: edit.nummer.trim(), ort: edit.ort.trim(), notiz: edit.notiz.trim() };
+    const next = clean.id ? betriebe.map((b) => (b.id === clean.id ? clean : b)) : [...betriebe, { ...clean, id: generateId() }];
+    save(next);
+    setReiter(clean.typ === "eigen" ? "eigen" : "fremd");
+    setEdit(null);
+  };
+
+  const Tile = ({ id, label, value }) => (
+    <button
+      type="button"
+      onClick={() => setReiter(id)}
+      className="h-[68px] bg-white text-[#2B2A26] border border-[#D9CFB8] rounded-lg px-1 py-2 flex flex-col items-center justify-center text-center transition overflow-hidden"
+      style={reiter === id ? { boxShadow: "0 0 0 2px #2B2A26 inset" } : undefined}
+    >
+      <p className="text-[10px] uppercase tracking-wide text-[#6B6858] truncate w-full">{label}</p>
+      <p className="font-slab font-bold" style={{ fontSize: "20px", lineHeight: "1.2", fontVariantNumeric: "tabular-nums", fontFamily: "'Arvo', serif" }}>
+        {value}
+      </p>
+    </button>
+  );
+  const field = (label, key, placeholder) => (
+    <>
+      <label className="block text-xs font-semibold uppercase tracking-wide text-[#6B6858] mb-1">{label}</label>
+      <input
+        type="text"
+        value={edit[key]}
+        onChange={(e) => setEdit({ ...edit, [key]: e.target.value })}
+        placeholder={placeholder}
+        className="w-full mb-3 px-3 py-2 rounded-lg border bg-white text-[#2B2A26] text-sm"
+        style={{ borderColor: "#9CA3AF" }}
+        readOnly={!isAdmin}
+      />
+    </>
+  );
+
+  return (
+    <div className="fixed inset-0 z-30 overflow-y-auto" style={{ backgroundColor: "#F9EFE4" }}>
+      <header className="border-b border-[#D9CFB8] px-5 pt-6 pb-4" style={{ backgroundColor: "#F9EFE4" }}>
+        <p className="text-xs uppercase tracking-[0.2em] text-[#6B6858] mb-1">Übersicht</p>
+        <h1 className="font-slab text-2xl font-bold text-[#2B2A26]">Betriebe</h1>
+
+        <div className="grid grid-cols-2 gap-2 mt-4">
+          <Tile id="eigen" label="Eigener Betrieb" value={eigene.length} />
+          <Tile id="fremd" label="Fremdbetriebe" value={fremde.length} />
+        </div>
+
+        <input
+          type="text"
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          placeholder="Suche nach Name, Betriebsnummer oder Ort…"
+          className="w-full mt-4 px-3 py-2 rounded-lg border border-[#D9CFB8] bg-white text-[#2B2A26] text-sm focus:outline-none focus:ring-2 focus:ring-[#4C6B3F]"
+        />
+
+        <div className="flex items-center justify-between gap-2 mt-3 flex-wrap">
+          <p className="text-[11px] text-[#8A8672]">Zum Sortieren auf eine Spaltenüberschrift tippen</p>
+          <div className="flex items-center justify-end gap-2 shrink-0 ml-auto">
+            {isAdmin && (
+              <button
+                type="button"
+                onClick={() => {
+                  setConfirmDelete(false);
+                  setEdit({ typ: reiter === "eigen" ? "eigen" : "fremd", name: "", nummer: "", ort: "", notiz: "" });
+                }}
+                className="p-1.5 rounded-lg bg-white border border-[#D9CFB8] text-[#2B2A26]"
+                aria-label="Betrieb hinzufügen"
+              >
+                <Plus size={16} />
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={() => {
+                setSearch("");
+                onBack();
+              }}
+              className="text-xs font-semibold rounded-lg px-3 py-1.5 transition whitespace-nowrap"
+              style={{ color: "#FFFFFF", backgroundColor: "#2B2A26", border: "1px solid #2B2A26" }}
+            >
+              Zurück
+            </button>
+          </div>
+        </div>
+      </header>
+
+      <div className="px-5 py-4 pb-10">
+        <div className="flex items-center gap-2 mb-2 px-0.5">
+          <h2 className="font-slab text-[15px] font-bold text-[#2B2A26] uppercase tracking-wide">{reiter === "eigen" ? "Eigener Betrieb" : "Fremdbetriebe"}</h2>
+          <span className="text-[12px] text-[#8A8672]">({list.length})</span>
+        </div>
+        {list.length === 0 ? (
+          <p className="text-sm text-[#B0A98F] italic px-0.5">
+            {term ? "Kein Betrieb gefunden." : reiter === "eigen" ? "Noch kein eigener Betrieb eingetragen. Über das + hinzufügen." : "Noch keine Fremdbetriebe eingetragen. Über das + hinzufügen."}
+          </p>
+        ) : (
+          <div className="rounded-xl border border-[#D9CFB8] bg-white overflow-x-auto">
+            <table className="w-full text-[13px]" style={{ borderCollapse: "separate", borderSpacing: 0, minWidth: 560 }}>
+              <thead>
+                <tr className="bg-white text-[#6B6858] text-[11px] uppercase tracking-wide">
+                  {th("name", "Name")}
+                  {th("nummer", "Betriebsnummer")}
+                  {th("ort", "Ort / Adresse")}
+                  {th("zu", "Zugänge von")}
+                  {th("ab", "Abgänge an")}
+                  <th className="w-6 px-2 py-2"></th>
+                </tr>
+              </thead>
+              <tbody>
+                {sorted.map((b) => (
+                  <tr key={b.id} onClick={() => setDetail(b)} className="border-t border-[#F9EFE4] cursor-pointer bg-white hover:bg-[#F9EFE4] transition">
+                    <td className="px-3 py-2 text-[#2B2A26] font-medium">{b.name || "–"}</td>
+                    <td className="px-3 py-2 text-[#2B2A26] whitespace-nowrap">{b.nummer || "–"}</td>
+                    <td className="px-3 py-2 text-[#2B2A26]">{b.ort || "–"}</td>
+                    <td className="px-3 py-2 text-[#2B2A26]" style={{ fontVariantNumeric: "tabular-nums" }}>{zugaenge(b).length}</td>
+                    <td className="px-3 py-2 text-[#2B2A26]" style={{ fontVariantNumeric: "tabular-nums" }}>{abgaenge(b).length}</td>
+                    <td className="px-2 py-2 text-[#B0A98F]"><ChevronRight size={16} /></td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+
+      {detail && !edit && (
+        <div
+          className="fixed inset-0 z-40 flex items-end sm:items-center justify-center"
+          style={{ position: "fixed", top: 0, right: 0, bottom: 0, left: 0, backgroundColor: "rgba(0,0,0,0.4)" }}
+          onClick={() => setDetail(null)}
+        >
+          <div onClick={(e) => e.stopPropagation()} className="w-full sm:max-w-lg bg-white rounded-t-2xl sm:rounded-2xl border border-[#D9CFB8] p-5 pb-6 max-h-[85vh] overflow-y-auto">
+            <div className="flex items-center justify-between mb-2">
+              <h2 className="font-slab text-lg font-bold text-[#2B2A26]">{betriebLabel(detail) || "Betrieb"}</h2>
+              <button type="button" onClick={() => setDetail(null)} className="p-1 text-[#8A8672] hover:text-[#2B2A26]" aria-label="Schließen">
+                <X size={20} />
+              </button>
+            </div>
+            <p className="text-sm text-[#6B6858] mb-1">{detail.typ === "eigen" ? "Eigener Betrieb" : "Fremdbetrieb"}{detail.ort ? ` · ${detail.ort}` : ""}</p>
+            {detail.notiz && <p className="text-sm text-[#2B2A26] mb-3 whitespace-pre-wrap">{detail.notiz}</p>}
+            {[
+              ["Zugänge von diesem Betrieb", zugaenge(detail), (a) => (a.hitZugang?.datum ? formatDate(a.hitZugang.datum) : "–")],
+              ["Abgänge an diesen Betrieb", abgaenge(detail), (a) => (a.abgangsDatum ? formatDate(a.abgangsDatum) : "–")],
+            ].map(([title, rows, dateOf]) => (
+              <div key={title} className="mt-3">
+                <p className="text-xs font-semibold uppercase tracking-wide text-[#6B6858] mb-1">{title} ({rows.length})</p>
+                {rows.length === 0 ? (
+                  <p className="text-sm text-[#B0A98F] italic">Keine.</p>
+                ) : (
+                  <div className="flex flex-col">
+                    {rows.map((a) => (
+                      <button
+                        key={a.id}
+                        type="button"
+                        onClick={() => {
+                          setDetail(null);
+                          onOpenAnimal(a);
+                        }}
+                        className="flex justify-between gap-2 text-sm py-1 border-b border-[#F9EFE4] text-left"
+                      >
+                        <span>{formatEarTag(a.earTag) || "ausstehend"}{a.name ? ` · ${a.name}` : ""}</span>
+                        <span className="text-[#8A8672]">{dateOf(a)}</span>
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+            ))}
+            {isAdmin && (
+              <button
+                type="button"
+                onClick={() => {
+                  setConfirmDelete(false);
+                  setEdit({ name: "", nummer: "", ort: "", notiz: "", ...detail });
+                  setDetail(null);
+                }}
+                className="w-full mt-4 py-2.5 rounded-lg font-semibold"
+                style={{ backgroundColor: "#2B2A26", color: "#FFFFFF" }}
+              >
+                Bearbeiten
+              </button>
+            )}
+          </div>
+        </div>
+      )}
+
+      {edit && (
+        <div
+          className="fixed inset-0 z-40 flex items-end sm:items-center justify-center"
+          style={{ position: "fixed", top: 0, right: 0, bottom: 0, left: 0, backgroundColor: "rgba(0,0,0,0.4)" }}
+          onClick={() => setEdit(null)}
+        >
+          <div onClick={(e) => e.stopPropagation()} className="w-full sm:max-w-sm bg-white rounded-t-2xl sm:rounded-2xl border border-[#D9CFB8] p-5 pb-6 max-h-[85vh] overflow-y-auto">
+            <div className="flex items-center justify-between mb-3">
+              <h2 className="font-slab text-lg font-bold text-[#2B2A26]">{edit.id ? "Betrieb bearbeiten" : "Betrieb hinzufügen"}</h2>
+              <button type="button" onClick={() => setEdit(null)} className="p-1 text-[#8A8672] hover:text-[#2B2A26]" aria-label="Schließen">
+                <X size={20} />
+              </button>
+            </div>
+            <label className="block text-xs font-semibold uppercase tracking-wide text-[#6B6858] mb-1">Art</label>
+            <div className="flex gap-2 mb-3">
+              {[
+                ["eigen", "Eigener Betrieb"],
+                ["fremd", "Fremdbetrieb"],
+              ].map(([v, l]) => (
+                <button
+                  key={v}
+                  type="button"
+                  onClick={() => setEdit({ ...edit, typ: v })}
+                  className="flex-1 py-2 rounded-lg border text-sm font-semibold"
+                  style={edit.typ === v ? { backgroundColor: "#2B2A26", color: "#FFFFFF", borderColor: "#2B2A26" } : { borderColor: "#D9CFB8", color: "#2B2A26" }}
+                >
+                  {l}
+                </button>
+              ))}
+            </div>
+            {field("Name", "name", "z. B. Hof Meier")}
+            {field("Betriebsnummer", "nummer", "z. B. 08 235 006 0210")}
+            {field("Ort / Adresse", "ort", "z. B. Musterstraße 1, 71034 Böblingen")}
+            <label className="block text-xs font-semibold uppercase tracking-wide text-[#6B6858] mb-1">Notiz</label>
+            <textarea
+              value={edit.notiz}
+              onChange={(e) => setEdit({ ...edit, notiz: e.target.value })}
+              rows={2}
+              placeholder="z. B. Ansprechpartner, Telefon"
+              className="w-full mb-3 px-3 py-2 rounded-lg border bg-white text-[#2B2A26] text-sm"
+              style={{ borderColor: "#9CA3AF" }}
+            />
+            {!edit.name.trim() && !edit.nummer.trim() && <p className="text-xs text-[#8A8672] mb-2">Bitte mindestens Name oder Betriebsnummer eintragen.</p>}
+            <button
+              type="button"
+              onClick={saveEdit}
+              disabled={!edit.name.trim() && !edit.nummer.trim()}
+              className="w-full py-2.5 rounded-lg font-semibold disabled:opacity-40"
+              style={{ backgroundColor: "#2B2A26", color: "#FFFFFF" }}
+            >
+              Speichern
+            </button>
+            {edit.id && (
+              confirmDelete ? (
+                <div className="flex gap-2 mt-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      save(betriebe.filter((b) => b.id !== edit.id));
+                      setEdit(null);
+                    }}
+                    className="flex-1 py-2 rounded-lg font-semibold"
+                    style={{ backgroundColor: "#BB201D", color: "#FFFFFF" }}
+                  >
+                    Wirklich löschen
+                  </button>
+                  <button type="button" onClick={() => setConfirmDelete(false)} className="flex-1 py-2 rounded-lg border border-[#D9CFB8] text-[#2B2A26]">
+                    Abbrechen
+                  </button>
+                </div>
+              ) : (
+                <button type="button" onClick={() => setConfirmDelete(true)} className="w-full mt-2 text-xs text-[#BB201D] underline">
+                  Betrieb löschen
+                </button>
+              )
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function StaelleView({ onBack }) {
   const isAdmin = useContext(AppModeContext) === "admin";
   const [staelle, setStaelle] = useState([]);
@@ -6056,6 +6412,7 @@ function RinderbestandApp() {
   const [abgangReturnTo, setAbgangReturnTo] = useState(null);
   const [stammbaumOpen, setStammbaumOpen] = useState(false);
   const [staelleOpen, setStaelleOpen] = useState(false);
+  const [betriebeOpen, setBetriebeOpen] = useState(false);
   const [brunstlisteOpen, setBrunstlisteOpen] = useState(false);
   const [mainMenuOpen, setMainMenuOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -6364,6 +6721,7 @@ function RinderbestandApp() {
     if (passAnimal) return `#/tier/${rid(passAnimal)}`;
     if (brunstlisteOpen) return "#/brunstliste";
     if (staelleOpen) return "#/staelle";
+    if (betriebeOpen) return "#/betriebe";
     if (stammbaumOpen) return "#/stammbaum";
     if (stallbuchAnimal) return `#/tier/${rid(stallbuchAnimal)}/stallbuch`;
     if (historieAnimal) return `#/tier/${rid(historieAnimal)}/historie/${encodeURIComponent(historieTab)}`;
@@ -6394,6 +6752,7 @@ function RinderbestandApp() {
     setAbgangReturnTo(null);
     setStammbaumOpen(false);
     setStaelleOpen(false);
+    setBetriebeOpen(false);
     setBrunstlisteOpen(false);
     setFormOpen(false);
     setEditing(null);
@@ -6415,6 +6774,7 @@ function RinderbestandApp() {
     if (p0 === "liste") return setListView(ROUTE_SLUG_TO_LIST[p1] || null);
     if (p0 === "stammbaum") return setStammbaumOpen(true);
     if (p0 === "staelle") return setStaelleOpen(true);
+    if (p0 === "betriebe") return setBetriebeOpen(true);
     if (p0 === "brunstliste") return setBrunstlisteOpen(true);
     if (p0 === "neu") {
       if (!isAdmin) return;
@@ -6656,6 +7016,20 @@ function RinderbestandApp() {
               >
                 <span className="font-slab text-sm font-bold" style={{ color: colorForCategory("Ställe").fg }}>
                   Ställe
+                </span>
+                <ChevronRight size={18} style={{ color: colorForCategory("Ställe").fg }} />
+              </button>
+              <button
+                type="button"
+                onClick={() => setBetriebeOpen(true)}
+                className="w-full rounded-xl border px-4 py-3 flex items-center justify-between transition"
+                style={{
+                  backgroundColor: colorForCategory("Ställe").bg,
+                  borderColor: "#D9CFB8",
+                }}
+              >
+                <span className="font-slab text-sm font-bold" style={{ color: colorForCategory("Ställe").fg }}>
+                  Betriebe
                 </span>
                 <ChevronRight size={18} style={{ color: colorForCategory("Ställe").fg }} />
               </button>
@@ -7358,6 +7732,10 @@ function RinderbestandApp() {
       )}
 
       {staelleOpen && <StaelleView onBack={() => setStaelleOpen(false)} />}
+
+      {betriebeOpen && (
+        <BetriebeView animals={animals} onBack={() => setBetriebeOpen(false)} onOpenAnimal={(a) => setPassAnimal(a)} />
+      )}
 
       {listView === "Unregistriert" && (
         <UnregistriertView
