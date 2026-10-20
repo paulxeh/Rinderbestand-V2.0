@@ -1298,7 +1298,7 @@ function AnimalForm({ initial, initialCategory, initialMotherEarTag, registering
                   style={{ borderColor: "#D9CFB8" }}
                 />
                 <p className="text-[11px] text-[#8A8672] mb-3">
-                  Einzelne Kälber vom Vorbetrieb kannst du unter „Unregistrierte Ohrenmarken → Kälber → +“ eintragen. Die App zählt dann die höhere der beiden Zahlen, nichts doppelt.
+                  Die Zahl wird mit den Kälbern im eigenen Betrieb zusammengerechnet. Übersicht unter „Unregistrierte Tiere → Kälber“.
                 </p>
               </>
             )}
@@ -5515,8 +5515,33 @@ function AbgaengeView({ animals, onOpenAnimal, onBack, onRequestAbgang }) {
   );
 }
 
-// ===== Unregistrierte Ohrenmarken (aufgebaut wie Abgänge/Brunstliste) =====
-function UnregistriertView({ animals, onOpenAnimal, onBack, onCreateUnregistered, onCreateAnimal }) {
+// Eingabefeld für "Kälber vom Vorbetrieb" – speichert erst beim Verlassen des Feldes
+function VorKaufInput({ value, onCommit }) {
+  const [v, setV] = useState(String(value || 0));
+  useEffect(() => setV(String(value || 0)), [value]);
+  const commit = () => {
+    const n = Math.max(0, parseInt(v, 10) || 0);
+    if (n !== (value || 0)) onCommit(n);
+    else setV(String(n));
+  };
+  return (
+    <input
+      type="number"
+      inputMode="numeric"
+      min="0"
+      value={v}
+      onClick={(e) => e.stopPropagation()}
+      onChange={(e) => setV(e.target.value.replace(/[^0-9]/g, ""))}
+      onBlur={commit}
+      onKeyDown={(e) => e.key === "Enter" && e.currentTarget.blur()}
+      className="w-16 px-2 py-1 rounded border border-[#D9CFB8] bg-white text-[13px]"
+      aria-label="Kälber vom Vorbetrieb"
+    />
+  );
+}
+
+// ===== Unregistrierte Tiere (aufgebaut wie Abgänge/Brunstliste) =====
+function UnregistriertView({ animals, onOpenAnimal, onBack, onCreateUnregistered, onCreateAnimal, onUpdateField }) {
   const isAdmin = useContext(AppModeContext) === "admin";
   const [reiter, setReiter] = useState("gesamt"); // gesamt | muetter | vaeter | kaelber
   const [search, setSearch] = useState("");
@@ -5524,38 +5549,45 @@ function UnregistriertView({ animals, onOpenAnimal, onBack, onCreateUnregistered
   const [newTag, setNewTag] = useState("");
   const [newGender, setNewGender] = useState("weiblich");
   const [addError, setAddError] = useState("");
-  // Kalb vom Vorbetrieb eintragen (Reiter Kälber)
+  // Kälber vom Vorbetrieb (Reiter Kälber): je zugekaufter Kuh nur die Anzahl
+  const cowStats = useContext(CowStatsContext);
   const [calfOpen, setCalfOpen] = useState(false);
-  const [calf, setCalf] = useState({ mother: "", earTag: "", birthDate: "", gender: "weiblich", betrieb: "" });
+  const [vk, setVk] = useState({ cowId: null, betrieb: "", datum: "", anzahl: "" });
   const { betriebe: gespeicherteBetriebe } = useBetriebe();
   const betriebVorschlaege = [...new Set([...gespeicherteBetriebe.filter((b) => b.typ !== "eigen").map(betriebLabel), ...collectBetriebe(animals)])];
-  const motherOptions = animals.filter((a) => a.gender === "weiblich" && a.earTag && a.category !== "Kälber");
+  const cowOptions = animals.filter((a) => a.gender === "weiblich" && a.earTag && a.category !== "Kälber" && a.category !== "Unregistriert");
   const todayISO = isoDateKey(new Date());
-  const saveCalf = () => {
-    const tag = cleanEarTag(calf.earTag);
-    if (!calf.mother) return setAddError("Bitte die Mutter auswählen.");
-    if (!calf.birthDate) return setAddError("Bitte das Geburtsdatum eintragen.");
-    if (tag && !isValidEarTag(tag)) return setAddError("Die Ohrmarke muss 2 Buchstaben + 10 Ziffern haben (oder leer lassen).");
-    if (tag && animals.some((a) => sameEarTag(a.earTag, tag))) return setAddError("Diese Ohrmarke gibt es bereits.");
-    onCreateAnimal({
-      earTag: tag,
-      name: "",
-      breed: "",
-      breedCode: "",
-      birthDate: calf.birthDate,
-      category: "Unregistriert",
-      gender: calf.gender,
-      motherEarTag: cleanEarTag(calf.mother),
-      fatherEarTag: "",
-      merkmale: "",
-      auffaelligkeiten: "",
-      history: [],
-      hitZugang: { art: "FG", datum: calf.birthDate, vorbesitzer: calf.betrieb.trim() },
+  const fremdKuehe = cowOptions.filter(
+    (a) => a.category !== "Abgänge" && ((a.hitZugang && a.hitZugang.art === "ZU") || Number(a.kalbungenVorKauf) > 0)
+  );
+  const statOf = (a) => cowStats[cleanEarTag(a.earTag)] || { kalbungen: 0, vorKauf: 0, eigeneKalbungen: 0 };
+  const kaelberVorbetrieb = fremdKuehe.reduce((sum, a) => sum + (statOf(a).vorKauf || 0), 0);
+  const saveVorKauf = () => {
+    const cow = animals.find((a) => a.id === vk.cowId);
+    if (!cow) return setAddError("Bitte die Kuh auswählen.");
+    onUpdateField(cow.id, {
+      hitZugang: { ...(cow.hitZugang || {}), art: "ZU", datum: vk.datum || (cow.hitZugang && cow.hitZugang.datum) || "", vorbesitzer: vk.betrieb.trim() },
+      kalbungenVorKauf: Math.max(0, parseInt(vk.anzahl, 10) || 0),
     });
     setAddError("");
-    setCalf({ ...calf, earTag: "", birthDate: "" });
     setCalfOpen(false);
   };
+  const getFremdValue = useCallback(
+    (a, key) => {
+      const st = cowStats[cleanEarTag(a.earTag)] || {};
+      switch (key) {
+        case "earTag": return cleanEarTag(a.earTag);
+        case "abschnitt": return CATEGORY_SINGULAR[a.category] || a.category || "";
+        case "betrieb": return (a.hitZugang && a.hitZugang.vorbesitzer) || "";
+        case "zugang": return (a.hitZugang && a.hitZugang.datum) || "";
+        case "vor": return st.vorKauf || 0;
+        case "hier": return st.eigeneKalbungen || 0;
+        case "gesamt": return st.kalbungen || 0;
+        default: return "";
+      }
+    },
+    [cowStats]
+  );
 
   const unreg = animals.filter((a) => a.category === "Unregistriert");
   const motherTags = new Set(animals.map((a) => cleanEarTag(a.motherEarTag)).filter(Boolean));
@@ -5573,6 +5605,8 @@ function UnregistriertView({ animals, onOpenAnimal, onBack, onCreateUnregistered
     (a.name || "").toLowerCase().includes(term);
   const base = reiter === "muetter" ? muetter : reiter === "vaeter" ? vaeter : reiter === "kaelber" ? kaelber : unreg;
   const list = base.filter(matches).sort((x, y) => (cleanEarTag(x.earTag) < cleanEarTag(y.earTag) ? -1 : 1));
+  const fremdList = fremdKuehe.filter(matches).sort((x, y) => (cleanEarTag(x.earTag) < cleanEarTag(y.earTag) ? -1 : 1));
+  const { sorted: fremdSorted, th: fth } = useTableSort(fremdList, getFremdValue);
 
   const Tile = ({ id, label, value }) => (
     <button
@@ -5608,13 +5642,13 @@ function UnregistriertView({ animals, onOpenAnimal, onBack, onCreateUnregistered
     <div className="fixed inset-0 z-30 overflow-y-auto" style={{ backgroundColor: "#F9EFE4" }}>
       <header className="border-b border-[#D9CFB8] px-5 pt-6 pb-4" style={{ backgroundColor: "#F9EFE4" }}>
         <p className="text-xs uppercase tracking-[0.2em] text-[#6B6858] mb-1">Übersicht</p>
-        <h1 className="font-slab text-2xl font-bold text-[#2B2A26]">Unregistrierte Ohrenmarken</h1>
+        <h1 className="font-slab text-2xl font-bold text-[#2B2A26]">Unregistrierte Tiere</h1>
 
         <div className="grid grid-cols-4 gap-2 mt-4">
           <Tile id="gesamt" label="Gesamt" value={unreg.length} />
           <Tile id="muetter" label="Mütter" value={muetter.length} />
           <Tile id="vaeter" label="Väter" value={vaeter.length} />
-          <Tile id="kaelber" label="Kälber" value={kaelber.length} />
+          <Tile id="kaelber" label="Kälber" value={kaelberVorbetrieb} />
         </div>
 
         <input
@@ -5634,11 +5668,14 @@ function UnregistriertView({ animals, onOpenAnimal, onBack, onCreateUnregistered
                 onClick={() => {
                   setNewTag("");
                   setAddError("");
-                  if (reiter === "kaelber") setCalfOpen(true);
+                  if (reiter === "kaelber") {
+                    setVk({ cowId: null, betrieb: "", datum: todayISO, anzahl: "" });
+                    setCalfOpen(true);
+                  }
                   else setAddOpen(true);
                 }}
                 className="p-1.5 rounded-lg bg-white border border-[#D9CFB8] text-[#2B2A26]"
-                aria-label={reiter === "kaelber" ? "Kalb vom Vorbetrieb eintragen" : "Unregistrierte Ohrmarke hinzufügen"}
+                aria-label={reiter === "kaelber" ? "Kälber vom Vorbetrieb eintragen" : "Unregistriertes Tier hinzufügen"}
               >
                 <Plus size={16} />
               </button>
@@ -5659,18 +5696,78 @@ function UnregistriertView({ animals, onOpenAnimal, onBack, onCreateUnregistered
       </header>
 
       <div className="px-5 py-4 pb-10">
-        <SectionTable
-          key={reiter}
-          title={reiter === "muetter" ? "Mütter" : reiter === "vaeter" ? "Väter" : reiter === "kaelber" ? "Kälber" : "Alle unregistrierten Ohrenmarken"}
-          color={colorForCategory("Unregistriert")}
-          animals={list}
-          showNachkommen
-          onOpenAnimal={onOpenAnimal}
-        />
-        <p className="text-[11px] text-[#8A8672] -mt-3">
-          Mütter/Väter = bei mindestens einem Tier als Mutter bzw. Vater eingetragen · Kälber = bei keinem Tier als Elternteil eingetragen.
-          Ein Tier wird registriert, indem es im Rinderpass über „Bearbeiten“ vervollständigt oder mit derselben Ohrmarke neu angelegt wird.
-        </p>
+        {reiter === "kaelber" ? (
+          <>
+            <div className="flex items-center gap-2 mb-2 px-0.5">
+              <h2 className="font-slab text-[15px] font-bold text-[#2B2A26] uppercase tracking-wide">Kälber vom Vorbetrieb</h2>
+              <span className="text-[12px] text-[#8A8672]">({fremdList.length} {fremdList.length === 1 ? "Kuh" : "Kühe"})</span>
+            </div>
+            {fremdList.length === 0 ? (
+              <p className="text-sm text-[#B0A98F] italic px-0.5">Keine zugekauften Kühe. Über das + eine Kuh mit ihren Kälbern vom Vorbetrieb eintragen.</p>
+            ) : (
+              <div className="rounded-xl border border-[#D9CFB8] bg-white overflow-x-auto">
+                <table className="w-full text-[13px]" style={{ borderCollapse: "separate", borderSpacing: 0, minWidth: 680 }}>
+                  <thead>
+                    <tr className="bg-white text-[#6B6858] text-[11px] uppercase tracking-wide">
+                      {fth("earTag", "Mutter")}
+                      {fth("abschnitt", "Abschnitt")}
+                      {fth("betrieb", "Vorbetrieb")}
+                      {fth("zugang", "Zugang am")}
+                      {fth("vor", "Kälber Vorbetrieb")}
+                      {fth("hier", "Kälber hier")}
+                      {fth("gesamt", "Gesamt")}
+                      <th className="w-6 px-2 py-2"></th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {fremdSorted.map((a) => {
+                      const st = statOf(a);
+                      return (
+                        <tr key={a.id} onClick={() => onOpenAnimal(a)} className="border-t border-[#F9EFE4] cursor-pointer bg-white hover:bg-[#F9EFE4] transition">
+                          <td className="px-3 py-2 text-[#2B2A26] whitespace-nowrap font-medium">
+                            {formatEarTag(a.earTag)}
+                            {a.name ? ` · ${a.name}` : ""}
+                          </td>
+                          <td className="px-3 py-2 text-[#2B2A26]">{CATEGORY_SINGULAR[a.category] || a.category}</td>
+                          <td className="px-3 py-2 text-[#2B2A26] whitespace-nowrap">{a.hitZugang?.vorbesitzer || "–"}</td>
+                          <td className="px-3 py-2 text-[#2B2A26] whitespace-nowrap">{a.hitZugang?.datum ? formatDate(a.hitZugang.datum) : "–"}</td>
+                          <td className="px-3 py-2 text-[#2B2A26]">
+                            {isAdmin ? (
+                              <VorKaufInput value={st.vorKauf || 0} onCommit={(n) => onUpdateField(a.id, { kalbungenVorKauf: n })} />
+                            ) : (
+                              st.vorKauf || 0
+                            )}
+                          </td>
+                          <td className="px-3 py-2 text-[#2B2A26]" style={{ fontVariantNumeric: "tabular-nums" }}>{st.eigeneKalbungen || 0}</td>
+                          <td className="px-3 py-2 text-[#2B2A26] font-semibold" style={{ fontVariantNumeric: "tabular-nums" }}>{st.kalbungen || 0}</td>
+                          <td className="px-2 py-2 text-[#B0A98F]"><ChevronRight size={16} /></td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
+            <p className="text-[11px] text-[#8A8672] mt-2">
+              Kälber Vorbetrieb = Anzahl Kalbungen vor dem Kauf (nur als Zahl, ohne einzelne Ohrmarken) · Kälber hier = Kalbungen im eigenen Betrieb · Gesamt = beides zusammen, so wie bei den Mutterkühen angezeigt.
+            </p>
+          </>
+        ) : (
+          <>
+            <SectionTable
+              key={reiter}
+              title={reiter === "muetter" ? "Mütter" : reiter === "vaeter" ? "Väter" : "Alle unregistrierten Tiere"}
+              color={colorForCategory("Unregistriert")}
+              animals={list}
+              showNachkommen
+              onOpenAnimal={onOpenAnimal}
+            />
+            <p className="text-[11px] text-[#8A8672] -mt-3">
+              Mütter/Väter = bei mindestens einem Tier als Mutter bzw. Vater eingetragen.
+              Ein Tier wird registriert, indem es im Rinderpass über „Bearbeiten“ vervollständigt oder mit derselben Ohrmarke neu angelegt wird.
+            </p>
+          </>
+        )}
       </div>
 
       {calfOpen && (
@@ -5681,67 +5778,60 @@ function UnregistriertView({ animals, onOpenAnimal, onBack, onCreateUnregistered
         >
           <div onClick={(e) => e.stopPropagation()} className="w-full sm:max-w-sm bg-white rounded-t-2xl sm:rounded-2xl border border-[#D9CFB8] p-5 pb-6 max-h-[85vh] overflow-y-auto">
             <div className="flex items-center justify-between mb-2">
-              <h2 className="font-slab text-lg font-bold text-[#2B2A26]">Kalb eintragen</h2>
+              <h2 className="font-slab text-lg font-bold text-[#2B2A26]">Kälber vom Vorbetrieb</h2>
               <button type="button" onClick={() => setCalfOpen(false)} className="p-1 text-[#8A8672] hover:text-[#2B2A26]" aria-label="Schließen">
                 <X size={20} />
               </button>
             </div>
-            <p className="text-xs text-[#8A8672] mb-3">Für Kälber, die eine Kuh vor dem Kauf in einem anderen Betrieb bekommen hat. Sie zählen bei der Mutter als Kalbungen.</p>
-            <label className="block text-xs font-semibold uppercase tracking-wide text-[#6B6858] mb-1">Mutter</label>
+            <p className="text-xs text-[#8A8672] mb-3">Für eine zugekaufte Kuh: wie viele Kälber sie vor dem Kauf hatte. Die Zahl wird mit ihren Kälbern im eigenen Betrieb zusammengerechnet.</p>
+            <label className="block text-xs font-semibold uppercase tracking-wide text-[#6B6858] mb-1">Mutter (Ohrmarke)</label>
             <EarTagSearchSelect
-              value={calf.mother}
+              value={vk.cowId ? (animals.find((a) => a.id === vk.cowId) || {}).earTag || "" : ""}
               onChange={(earTag) => {
-                const m = motherOptions.find((a) => sameEarTag(a.earTag, earTag));
-                setCalf({ ...calf, mother: earTag, betrieb: calf.betrieb || (m?.hitZugang?.vorbesitzer || "") });
+                const m = cowOptions.find((a) => sameEarTag(a.earTag, earTag));
+                setVk({
+                  cowId: m ? m.id : null,
+                  betrieb: (m && m.hitZugang && m.hitZugang.art === "ZU" && m.hitZugang.vorbesitzer) || "",
+                  datum: (m && m.hitZugang && m.hitZugang.art === "ZU" && m.hitZugang.datum) || todayISO,
+                  anzahl: m && Number(m.kalbungenVorKauf) > 0 ? String(m.kalbungenVorKauf) : "",
+                });
                 setAddError("");
               }}
-              options={motherOptions}
+              options={cowOptions}
               placeholder="Ohrmarke oder Namen suchen…"
               emptyLabel="Bitte wählen…"
             />
-            <label className="block text-xs font-semibold uppercase tracking-wide text-[#6B6858] mb-1 mt-3">Ohrmarke des Kalbs (falls bekannt)</label>
-            <input
-              type="text"
-              value={liveFormatEarTag(calf.earTag)}
-              onChange={(e) => setCalf({ ...calf, earTag: e.target.value })}
-              placeholder="z. B. DE 08 123 45678"
-              className="w-full mb-3 px-3 py-2 rounded-lg border bg-white text-[#2B2A26] text-sm"
-              style={{ borderColor: "#9CA3AF" }}
-            />
-            <label className="block text-xs font-semibold uppercase tracking-wide text-[#6B6858] mb-1">Geburtsdatum</label>
-            <input
-              type="date"
-              value={calf.birthDate}
-              max={todayISO}
-              onChange={(e) => setCalf({ ...calf, birthDate: e.target.value })}
-              className="w-full mb-3 px-3 py-2 rounded-lg border bg-white text-[#2B2A26] text-sm"
-              style={{ borderColor: "#9CA3AF" }}
-            />
-            <label className="block text-xs font-semibold uppercase tracking-wide text-[#6B6858] mb-1">Geschlecht</label>
-            <div className="flex gap-2 mb-3">
-              {["weiblich", "männlich"].map((v) => (
-                <button
-                  key={v}
-                  type="button"
-                  onClick={() => setCalf({ ...calf, gender: v })}
-                  className="flex-1 py-2 rounded-lg border text-sm font-semibold"
-                  style={calf.gender === v ? { backgroundColor: "#2B2A26", color: "#FFFFFF", borderColor: "#2B2A26" } : { borderColor: "#D9CFB8", color: "#2B2A26" }}
-                >
-                  {v}
-                </button>
-              ))}
-            </div>
-            <label className="block text-xs font-semibold uppercase tracking-wide text-[#6B6858] mb-1">Geboren im Betrieb</label>
+            <label className="block text-xs font-semibold uppercase tracking-wide text-[#6B6858] mb-1 mt-3">Vorbetrieb</label>
             <BetriebInput
-              value={calf.betrieb}
-              onChange={(v) => setCalf({ ...calf, betrieb: v })}
+              value={vk.betrieb}
+              onChange={(v) => setVk({ ...vk, betrieb: v })}
               options={betriebVorschlaege}
               placeholder="Betriebsnummer oder Name"
               className="w-full mb-3 px-3 py-2 rounded-lg border bg-white text-[#2B2A26] text-sm"
               style={{ borderColor: "#9CA3AF" }}
             />
+            <label className="block text-xs font-semibold uppercase tracking-wide text-[#6B6858] mb-1">Zugang am</label>
+            <input
+              type="date"
+              value={vk.datum}
+              max={todayISO}
+              onChange={(e) => setVk({ ...vk, datum: e.target.value })}
+              className="w-full mb-3 px-3 py-2 rounded-lg border bg-white text-[#2B2A26] text-sm"
+              style={{ borderColor: "#9CA3AF" }}
+            />
+            <label className="block text-xs font-semibold uppercase tracking-wide text-[#6B6858] mb-1">Anzahl Kälber vom Vorbetrieb</label>
+            <input
+              type="number"
+              inputMode="numeric"
+              min="0"
+              value={vk.anzahl}
+              onChange={(e) => setVk({ ...vk, anzahl: e.target.value.replace(/[^0-9]/g, "") })}
+              placeholder="z. B. 3"
+              className="w-full mb-3 px-3 py-2 rounded-lg border bg-white text-[#2B2A26] text-sm"
+              style={{ borderColor: "#9CA3AF" }}
+            />
             {addError && <p className="text-[#BB201D] text-sm mb-3">{addError}</p>}
-            <button type="button" onClick={saveCalf} className="w-full py-2.5 rounded-lg font-semibold" style={{ backgroundColor: "#2B2A26", color: "#FFFFFF" }}>
+            <button type="button" onClick={saveVorKauf} className="w-full py-2.5 rounded-lg font-semibold" style={{ backgroundColor: "#2B2A26", color: "#FFFFFF" }}>
               Speichern
             </button>
           </div>
@@ -5756,7 +5846,7 @@ function UnregistriertView({ animals, onOpenAnimal, onBack, onCreateUnregistered
         >
           <div onClick={(e) => e.stopPropagation()} className="w-full sm:max-w-sm bg-white rounded-t-2xl sm:rounded-2xl border border-[#D9CFB8] p-5 pb-6">
             <div className="flex items-center justify-between mb-3">
-              <h2 className="font-slab text-lg font-bold text-[#2B2A26]">Ohrmarke hinzufügen</h2>
+              <h2 className="font-slab text-lg font-bold text-[#2B2A26]">Unregistriertes Tier hinzufügen</h2>
               <button type="button" onClick={() => setAddOpen(false)} className="p-1 text-[#8A8672] hover:text-[#2B2A26]" aria-label="Schließen">
                 <X size={20} />
               </button>
@@ -7247,7 +7337,7 @@ function RinderbestandApp() {
               >
                 <span className="flex flex-col items-start">
                   <span className="font-slab text-sm font-bold" style={{ color: colorForCategory("Unregistriert").fg }}>
-                    Unregistrierte Ohrenmarken
+                    Unregistrierte Tiere
                   </span>
                   <span className="text-xs opacity-80" style={{ color: colorForCategory("Unregistriert").fg }}>
                     {animals.filter((a) => a.category === "Unregistriert").length} Stück
@@ -7307,7 +7397,7 @@ function RinderbestandApp() {
                   : listView === "Gesamt"
                   ? "Gesamter Bestand"
                   : listView === "Unregistriert"
-                  ? "Unregistrierte Ohrenmarken"
+                  ? "Unregistrierte Tiere"
                   : listView}
               </h2>
               <div className="flex items-center justify-end gap-2 shrink-0 flex-wrap ml-auto">
@@ -7931,6 +8021,7 @@ function RinderbestandApp() {
           onBack={() => setListView(null)}
           onCreateUnregistered={handleCreateUnregistered}
           onCreateAnimal={handleCreateAnimal}
+          onUpdateField={handleUpdateField}
         />
       )}
 
