@@ -6751,6 +6751,13 @@ function RinderbestandApp() {
   const [query, setQuery] = useState("");
   const [listView, setListView] = useState(null); // null | "Gesamt" | Kategoriename
   const [stallAnsicht, setStallAnsicht] = useState(false);
+  // "Aktueller Rinderbestand" ist eine eigene Seite: Gesamt oder einer der vier Abschnitte
+  const bestandOpen = listView === "Gesamt" || CATEGORIES.includes(listView);
+  useEffect(() => {
+    try {
+      window.scrollTo(0, 0);
+    } catch (e) {}
+  }, [bestandOpen]);
   useEffect(() => {
     setStallAnsicht(false);
   }, [listView]);
@@ -7180,19 +7187,14 @@ function RinderbestandApp() {
         className="border-b border-[#D9CFB8] px-5 pt-6 pb-4"
         style={{ backgroundColor: "#F9EFE4" }}
       >
-        <div className="flex items-center gap-2 text-[#6B6858] text-xs uppercase tracking-[0.2em] mb-1">
-          <TagIcon size={14} />
-          <span>Bestandsbuch</span>
-        </div>
-        <h1 className="font-slab text-2xl font-bold text-[#2B2A26]">Rinderbestand</h1>
-        {!cloud.configured && (
-          <p className="text-[11px] text-[#8A8672] mt-0.5">Testversion · Daten nur auf diesem Gerät gespeichert</p>
-        )}
-
+        {bestandOpen ? (
+          <>
+            <p className="text-xs uppercase tracking-[0.2em] text-[#6B6858] mb-1">Übersicht</p>
+            <h1 className="font-slab text-2xl font-bold text-[#2B2A26]">Aktueller Rinderbestand</h1>
         <div className="grid grid-cols-5 gap-2 mt-4">
           <button
             type="button"
-            onClick={() => setListView((v) => (v === "Gesamt" ? null : "Gesamt"))}
+            onClick={() => setListView("Gesamt")}
             className="h-[68px] bg-white text-[#2B2A26] border border-[#D9CFB8] rounded-lg px-2 py-2 flex flex-col items-center justify-center text-center transition"
             style={listView === "Gesamt" ? { boxShadow: "0 0 0 2px #2B2A26 inset" } : undefined}
           >
@@ -7208,7 +7210,7 @@ function RinderbestandApp() {
               <button
                 type="button"
                 key={cat}
-                onClick={() => setListView((v) => (v === cat ? null : cat))}
+                onClick={() => setListView(cat)}
                 className="h-[68px] rounded-lg px-2 py-2 flex flex-col items-center justify-center text-center overflow-hidden transition"
                 style={{
                   backgroundColor: color.bg,
@@ -7224,6 +7226,20 @@ function RinderbestandApp() {
             );
           })}
         </div>
+
+          </>
+        ) : (
+          <>
+            <div className="flex items-center gap-2 text-[#6B6858] text-xs uppercase tracking-[0.2em] mb-1">
+              <TagIcon size={14} />
+              <span>Bestandsbuch</span>
+            </div>
+            <h1 className="font-slab text-2xl font-bold text-[#2B2A26]">Rinderbestand</h1>
+            {!cloud.configured && (
+              <p className="text-[11px] text-[#8A8672] mt-0.5">Testversion · Daten nur auf diesem Gerät gespeichert</p>
+            )}
+          </>
+        )}
 
         <input
           value={query}
@@ -7267,6 +7283,21 @@ function RinderbestandApp() {
                 setFormOpen(true);
               }}
             />
+            <button
+              type="button"
+              onClick={() => setListView("Gesamt")}
+              className="w-full mb-2 rounded-xl border px-4 py-3 flex items-center justify-between transition"
+              style={{ backgroundColor: "#FFFFFF", borderColor: "#D9CFB8" }}
+            >
+              <span className="flex flex-col items-start">
+                <span className="font-slab text-sm font-bold text-[#2B2A26]">Aktueller Rinderbestand</span>
+                <span className="text-xs text-[#6B6858]">
+                  {animals.filter((a) => CATEGORIES.includes(a.category)).length} Tiere ·{" "}
+                  {CATEGORIES.map((c) => `${byCategory[c]?.length || 0} ${c}`).join(" · ")}
+                </span>
+              </span>
+              <ChevronRight size={18} style={{ color: "#2B2A26" }} />
+            </button>
             <div className="flex flex-col gap-2 mb-6">
               <button
                 type="button"
