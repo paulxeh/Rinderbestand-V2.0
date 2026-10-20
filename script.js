@@ -6388,7 +6388,7 @@ function JahresuebersichtView({ animals, onBack }) {
 
         <div className="flex items-center justify-between gap-2 mt-3 flex-wrap">
           <p className="text-[11px] text-[#8A8672]">
-            {reiter === "aktuell" ? `Stand heute (${formatDate(heute)}) im Vergleich zum ganzen Vorjahr` : "Bestand jeweils am 31.12. · zum Sortieren auf eine Spaltenüberschrift tippen"}
+            {reiter === "aktuell" ? `Bestand heute im Vergleich zum Stand am 31.12.${aktJahr - 1}` : "Bestand jeweils am 31.12. · zum Sortieren auf eine Spaltenüberschrift tippen"}
           </p>
           <div className="flex items-center justify-end gap-2 shrink-0 ml-auto">
             <button
@@ -6410,8 +6410,8 @@ function JahresuebersichtView({ animals, onBack }) {
               <thead>
                 <tr className="bg-white text-[#6B6858] text-[11px] uppercase tracking-wide">
                   <th className="text-left font-semibold px-3 py-2"></th>
-                  <th className="text-right font-semibold px-3 py-2">{aktJahr} bis heute</th>
-                  {vorjahr && <th className="text-right font-semibold px-3 py-2">{vorjahr.jahr} gesamt</th>}
+                  <th className="text-right font-semibold px-3 py-2 text-[#2B2A26]">{aktJahr}</th>
+                  {vorjahr && <th className="text-right font-semibold px-3 py-2">Vorjahr {vorjahr.jahr}</th>}
                   {vorjahr && <th className="text-right font-semibold px-3 py-2">Unterschied</th>}
                 </tr>
               </thead>
@@ -6421,10 +6421,19 @@ function JahresuebersichtView({ animals, onBack }) {
                   return (
                     <React.Fragment key={k.key}>
                       {neueGruppe && (
-                        <tr>
-                          <td colSpan={4} className="px-3 pt-3 pb-1 text-[11px] font-semibold uppercase tracking-wide text-[#6B6858] border-t border-[#D9CFB8]" style={{ backgroundColor: "#F9EFE4" }}>
-                            {k.group === "Bestand am Stichtag" ? "Bestand (heute bzw. 31.12. des Vorjahres)" : "Ereignisse im Jahr"}
+                        <tr className="text-[11px] font-semibold uppercase tracking-wide text-[#6B6858]" style={{ backgroundColor: "#F9EFE4" }}>
+                          <td className="px-3 pt-3 pb-1 border-t border-[#D9CFB8]">
+                            {k.group === "Bestand am Stichtag" ? "Aktuell im Stall" : "Ereignisse im Jahr"}
                           </td>
+                          <td className="px-3 pt-3 pb-1 border-t border-[#D9CFB8] text-right normal-case text-[#2B2A26]">
+                            {k.group === "Bestand am Stichtag" ? `heute ${formatDate(heute)}` : `01.01.–${formatDate(heute).slice(0, 6)}`}
+                          </td>
+                          {vorjahr && (
+                            <td className="px-3 pt-3 pb-1 border-t border-[#D9CFB8] text-right normal-case">
+                              {k.group === "Bestand am Stichtag" ? `am 31.12.${vorjahr.jahr}` : "ganzes Jahr"}
+                            </td>
+                          )}
+                          {vorjahr && <td className="px-3 pt-3 pb-1 border-t border-[#D9CFB8]"></td>}
                         </tr>
                       )}
                       <tr className="border-t border-[#F9EFE4]">
