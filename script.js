@@ -409,22 +409,41 @@ function buildBullStats(animals) {
 
 function buildCowStats(animals) {
   const byMother = {};
+  const byTag = {};
   animals.forEach((a) => {
+    const t = cleanEarTag(a.earTag);
+    if (t) byTag[t] = a;
     const m = cleanEarTag(a.motherEarTag);
     if (!m) return;
     (byMother[m] = byMother[m] || []).push(a);
   });
+  // Kühe mit angegebener Anzahl Kalbungen vor dem Kauf, aber (noch) ohne eingetragene Kälber
+  animals.forEach((a) => {
+    const t = cleanEarTag(a.earTag);
+    if (t && Number(a.kalbungenVorKauf) > 0 && !byMother[t]) byMother[t] = [];
+  });
   const stats = {};
   Object.entries(byMother).forEach(([mother, kids]) => {
+    const cow = byTag[mother] || null;
+    const zugekauft = cow && cow.hitZugang && cow.hitZugang.art === "ZU" && cow.hitZugang.datum ? cow.hitZugang.datum : null;
     // Kalbungen: Geburten, die höchstens 2 Tage auseinanderliegen (Zwillinge), zählen als eine Kalbung
     const dates = kids.map((k) => k.birthDate).filter(Boolean).sort();
-    let kalbungen = kids.filter((k) => !k.birthDate).length;
+    let ohneDatum = kids.filter((k) => !k.birthDate).length;
+    let vorKaufGezaehlt = 0;
+    let eigeneKalbungen = 0;
     let last = null;
     dates.forEach((d) => {
       const t = new Date(d).getTime();
-      if (last === null || t - last > 2 * 86400000) kalbungen++;
+      if (last === null || t - last > 2 * 86400000) {
+        if (zugekauft && d < zugekauft) vorKaufGezaehlt++;
+        else eigeneKalbungen++;
+      }
       last = t;
     });
+    // Angegebene Anzahl vor dem Kauf ersetzt die einzeln eingetragenen Kalbungen vor dem Kauf (kein Doppelzählen)
+    const vorKaufAngabe = Math.max(0, Number(cow?.kalbungenVorKauf) || 0);
+    const vorKauf = Math.max(vorKaufAngabe, vorKaufGezaehlt);
+    const kalbungen = vorKauf + eigeneKalbungen + ohneDatum;
     // Aktuelles Kalb: jüngstes Kalb, das noch im Abschnitt "Kälber" steht
     const current = kids
       .filter((k) => k.category === "Kälber")
@@ -433,7 +452,7 @@ function buildCowStats(animals) {
     const lastCalving = dates.length ? dates[dates.length - 1] : null;
     // Erste Kalbung: ältestes Kalb dieser Mutter
     const firstCalf = kids.filter((k) => k.birthDate).sort((x, y) => (x.birthDate < y.birthDate ? -1 : 1))[0] || null;
-    stats[mother] = { kalbungen, currentCalf: current, lastCalving, firstCalf };
+    stats[mother] = { kalbungen, vorKauf, eigeneKalbungen: eigeneKalbungen + ohneDatum, currentCalf: current, lastCalving, firstCalf };
   });
   return stats;
 }
@@ -806,6 +825,7 @@ function herkunftText(a) {
   const z = a.hitZugang || {};
   if (z.art === "ZU") return `Zukauf${z.datum ? ` am ${formatDate(z.datum)}` : ""}${z.vorbesitzer ? ` von ${z.vorbesitzer}` : ""}`;
   if (z.art === "GE") return "Im Betrieb geboren";
+  if (z.art === "FG") return `Geboren im Fremdbetrieb${z.vorbesitzer ? ` ${z.vorbesitzer}` : ""}`;
   if (z.art === "ER") return `Ersterfassung${z.datum ? ` ${formatDate(z.datum)}` : ""}`;
   if (z.art) return `${z.art}${z.datum ? ` ${formatDate(z.datum)}` : ""}${z.vorbesitzer ? ` von ${z.vorbesitzer}` : ""}`;
   return "–";
@@ -830,6 +850,7 @@ function AnimalForm({ initial, initialCategory, initialMotherEarTag, registering
   const initialZugang = initial?.hitZugang || {};
   const [herkunftArt, setHerkunftArt] = useState(initialZugang.art || "GE");
   const [vorbesitzer, setVorbesitzer] = useState(initialZugang.vorbesitzer || "");
+  const [kalbungenVorKauf, setKalbungenVorKauf] = useState(initial?.kalbungenVorKauf ? String(initial.kalbungenVorKauf) : "");
   const [zugangDatum, setZugangDatum] = useState(initialZugang.art && initialZugang.art !== "GE" ? initialZugang.datum || "" : new Date().toISOString().slice(0, 10));
   const { betriebe: gespeicherteBetriebe } = useBetriebe();
   const betriebe = useMemo(
@@ -927,6 +948,7 @@ function AnimalForm({ initial, initialCategory, initialMotherEarTag, registering
         datum: herkunftArt === "GE" ? birthDate : zugangDatum,
         vorbesitzer: herkunftArt === "GE" ? "" : vorbesitzer.trim(),
       },
+      kalbungenVorKauf: herkunftArt === "ZU" && gender === "weiblich" && Number(kalbungenVorKauf) > 0 ? Number(kalbungenVorKauf) : 0,
     });
   };
 
@@ -1261,6 +1283,25 @@ function AnimalForm({ initial, initialCategory, initialMotherEarTag, registering
               className="w-full mb-3 px-3 py-2 rounded-lg border text-sm bg-white"
               style={{ borderColor: "#D9CFB8" }}
             />
+            {herkunftArt === "ZU" && gender === "weiblich" && (
+              <>
+                <label className="block text-xs font-semibold uppercase tracking-wide text-[#6B6858] mb-1">Kalbungen vor dem Kauf (Anzahl)</label>
+                <input
+                  type="number"
+                  inputMode="numeric"
+                  min="0"
+                  step="1"
+                  value={kalbungenVorKauf}
+                  onChange={(e) => setKalbungenVorKauf(e.target.value.replace(/[^0-9]/g, ""))}
+                  placeholder="z. B. 3"
+                  className="w-full mb-1 px-3 py-2 rounded-lg border text-sm bg-white"
+                  style={{ borderColor: "#D9CFB8" }}
+                />
+                <p className="text-[11px] text-[#8A8672] mb-3">
+                  Einzelne Kälber vom Vorbetrieb kannst du unter „Unregistrierte Ohrenmarken → Kälber → +“ eintragen. Die App zählt dann die höhere der beiden Zahlen, nichts doppelt.
+                </p>
+              </>
+            )}
           </>
         )}
 
@@ -1474,6 +1515,7 @@ function AnimalPass({ animal, allAnimals, onEdit, onClose, onOpenAnimal, onShowA
                 />
                 {animal.category !== "Abgänge" && <InfoRow label="Stall" value={animal.stall || "–"} />}
                 <InfoRow label="Herkunft" value={herkunftText(animal)} />
+                {Number(animal.kalbungenVorKauf) > 0 && <InfoRow label="Kalbungen vor Kauf" value={String(animal.kalbungenVorKauf)} />}
               </div>
             </div>
             <div>
@@ -2109,6 +2151,9 @@ function SectionTable({ title, color, animals, onOpenAnimal, showParents, showGe
                       </td>
                       <td className="px-3 py-2 text-[#2B2A26]" style={{ fontVariantNumeric: "tabular-nums" }}>
                         {cowStats[cleanEarTag(a.earTag)]?.kalbungen || 0}
+                        {cowStats[cleanEarTag(a.earTag)]?.vorKauf > 0 && (
+                          <span className="text-[11px] text-[#8A8672]"> (davon {cowStats[cleanEarTag(a.earTag)].vorKauf} vor Kauf)</span>
+                        )}
                       </td>
                     </>
                   )}
@@ -3012,6 +3057,7 @@ function SbTable({ head, rows, minWidth = 520 }) {
 
 function StallbuchView({ animal, allAnimals = [], onBack, onOpenAnimal, onUpdateField }) {
   const isAdmin = useContext(AppModeContext) === "admin";
+  const cowStatsSb = useContext(CowStatsContext);
   const current = allAnimals.find((a) => a.id === animal.id) || animal;
   const find = (tag) => (tag ? allAnimals.find((a) => sameEarTag(a.earTag, tag)) || null : null);
   const isFemale = current.gender === "weiblich";
@@ -3147,7 +3193,13 @@ function StallbuchView({ animal, allAnimals = [], onBack, onOpenAnimal, onUpdate
           <>
             <SbBox title="Abkalbe- und Nachzuchtdaten">
               <div className="grid grid-cols-3 border-b border-[#D9CFB8]">
-                <SbField label="Kalbungen">{String(calvings.length)}</SbField>
+                <SbField label="Kalbungen">
+                  {(() => {
+                    const st = cowStatsSb[cleanEarTag(current.earTag)];
+                    if (!st) return String(calvings.length);
+                    return st.vorKauf > 0 ? `${st.kalbungen} (davon ${st.vorKauf} vor Kauf)` : String(st.kalbungen);
+                  })()}
+                </SbField>
                 <SbField label="EKA (Erstkalbealter)">{eka}</SbField>
                 <SbField label="Durchschn. ZKZ">{avgZkz !== null ? `${avgZkz} Tage` : ""}</SbField>
               </div>
@@ -5464,7 +5516,7 @@ function AbgaengeView({ animals, onOpenAnimal, onBack, onRequestAbgang }) {
 }
 
 // ===== Unregistrierte Ohrenmarken (aufgebaut wie Abgänge/Brunstliste) =====
-function UnregistriertView({ animals, onOpenAnimal, onBack, onCreateUnregistered }) {
+function UnregistriertView({ animals, onOpenAnimal, onBack, onCreateUnregistered, onCreateAnimal }) {
   const isAdmin = useContext(AppModeContext) === "admin";
   const [reiter, setReiter] = useState("gesamt"); // gesamt | muetter | vaeter | kaelber
   const [search, setSearch] = useState("");
@@ -5472,6 +5524,38 @@ function UnregistriertView({ animals, onOpenAnimal, onBack, onCreateUnregistered
   const [newTag, setNewTag] = useState("");
   const [newGender, setNewGender] = useState("weiblich");
   const [addError, setAddError] = useState("");
+  // Kalb vom Vorbetrieb eintragen (Reiter Kälber)
+  const [calfOpen, setCalfOpen] = useState(false);
+  const [calf, setCalf] = useState({ mother: "", earTag: "", birthDate: "", gender: "weiblich", betrieb: "" });
+  const { betriebe: gespeicherteBetriebe } = useBetriebe();
+  const betriebVorschlaege = [...new Set([...gespeicherteBetriebe.filter((b) => b.typ !== "eigen").map(betriebLabel), ...collectBetriebe(animals)])];
+  const motherOptions = animals.filter((a) => a.gender === "weiblich" && a.earTag && a.category !== "Kälber");
+  const todayISO = isoDateKey(new Date());
+  const saveCalf = () => {
+    const tag = cleanEarTag(calf.earTag);
+    if (!calf.mother) return setAddError("Bitte die Mutter auswählen.");
+    if (!calf.birthDate) return setAddError("Bitte das Geburtsdatum eintragen.");
+    if (tag && !isValidEarTag(tag)) return setAddError("Die Ohrmarke muss 2 Buchstaben + 10 Ziffern haben (oder leer lassen).");
+    if (tag && animals.some((a) => sameEarTag(a.earTag, tag))) return setAddError("Diese Ohrmarke gibt es bereits.");
+    onCreateAnimal({
+      earTag: tag,
+      name: "",
+      breed: "",
+      breedCode: "",
+      birthDate: calf.birthDate,
+      category: "Unregistriert",
+      gender: calf.gender,
+      motherEarTag: cleanEarTag(calf.mother),
+      fatherEarTag: "",
+      merkmale: "",
+      auffaelligkeiten: "",
+      history: [],
+      hitZugang: { art: "FG", datum: calf.birthDate, vorbesitzer: calf.betrieb.trim() },
+    });
+    setAddError("");
+    setCalf({ ...calf, earTag: "", birthDate: "" });
+    setCalfOpen(false);
+  };
 
   const unreg = animals.filter((a) => a.category === "Unregistriert");
   const motherTags = new Set(animals.map((a) => cleanEarTag(a.motherEarTag)).filter(Boolean));
@@ -5550,10 +5634,11 @@ function UnregistriertView({ animals, onOpenAnimal, onBack, onCreateUnregistered
                 onClick={() => {
                   setNewTag("");
                   setAddError("");
-                  setAddOpen(true);
+                  if (reiter === "kaelber") setCalfOpen(true);
+                  else setAddOpen(true);
                 }}
                 className="p-1.5 rounded-lg bg-white border border-[#D9CFB8] text-[#2B2A26]"
-                aria-label="Unregistrierte Ohrmarke hinzufügen"
+                aria-label={reiter === "kaelber" ? "Kalb vom Vorbetrieb eintragen" : "Unregistrierte Ohrmarke hinzufügen"}
               >
                 <Plus size={16} />
               </button>
@@ -5587,6 +5672,81 @@ function UnregistriertView({ animals, onOpenAnimal, onBack, onCreateUnregistered
           Ein Tier wird registriert, indem es im Rinderpass über „Bearbeiten“ vervollständigt oder mit derselben Ohrmarke neu angelegt wird.
         </p>
       </div>
+
+      {calfOpen && (
+        <div
+          className="fixed inset-0 z-40 flex items-end sm:items-center justify-center"
+          style={{ position: "fixed", top: 0, right: 0, bottom: 0, left: 0, backgroundColor: "rgba(0,0,0,0.4)" }}
+          onClick={() => setCalfOpen(false)}
+        >
+          <div onClick={(e) => e.stopPropagation()} className="w-full sm:max-w-sm bg-white rounded-t-2xl sm:rounded-2xl border border-[#D9CFB8] p-5 pb-6 max-h-[85vh] overflow-y-auto">
+            <div className="flex items-center justify-between mb-2">
+              <h2 className="font-slab text-lg font-bold text-[#2B2A26]">Kalb eintragen</h2>
+              <button type="button" onClick={() => setCalfOpen(false)} className="p-1 text-[#8A8672] hover:text-[#2B2A26]" aria-label="Schließen">
+                <X size={20} />
+              </button>
+            </div>
+            <p className="text-xs text-[#8A8672] mb-3">Für Kälber, die eine Kuh vor dem Kauf in einem anderen Betrieb bekommen hat. Sie zählen bei der Mutter als Kalbungen.</p>
+            <label className="block text-xs font-semibold uppercase tracking-wide text-[#6B6858] mb-1">Mutter</label>
+            <EarTagSearchSelect
+              value={calf.mother}
+              onChange={(earTag) => {
+                const m = motherOptions.find((a) => sameEarTag(a.earTag, earTag));
+                setCalf({ ...calf, mother: earTag, betrieb: calf.betrieb || (m?.hitZugang?.vorbesitzer || "") });
+                setAddError("");
+              }}
+              options={motherOptions}
+              placeholder="Ohrmarke oder Namen suchen…"
+              emptyLabel="Bitte wählen…"
+            />
+            <label className="block text-xs font-semibold uppercase tracking-wide text-[#6B6858] mb-1 mt-3">Ohrmarke des Kalbs (falls bekannt)</label>
+            <input
+              type="text"
+              value={liveFormatEarTag(calf.earTag)}
+              onChange={(e) => setCalf({ ...calf, earTag: e.target.value })}
+              placeholder="z. B. DE 08 123 45678"
+              className="w-full mb-3 px-3 py-2 rounded-lg border bg-white text-[#2B2A26] text-sm"
+              style={{ borderColor: "#9CA3AF" }}
+            />
+            <label className="block text-xs font-semibold uppercase tracking-wide text-[#6B6858] mb-1">Geburtsdatum</label>
+            <input
+              type="date"
+              value={calf.birthDate}
+              max={todayISO}
+              onChange={(e) => setCalf({ ...calf, birthDate: e.target.value })}
+              className="w-full mb-3 px-3 py-2 rounded-lg border bg-white text-[#2B2A26] text-sm"
+              style={{ borderColor: "#9CA3AF" }}
+            />
+            <label className="block text-xs font-semibold uppercase tracking-wide text-[#6B6858] mb-1">Geschlecht</label>
+            <div className="flex gap-2 mb-3">
+              {["weiblich", "männlich"].map((v) => (
+                <button
+                  key={v}
+                  type="button"
+                  onClick={() => setCalf({ ...calf, gender: v })}
+                  className="flex-1 py-2 rounded-lg border text-sm font-semibold"
+                  style={calf.gender === v ? { backgroundColor: "#2B2A26", color: "#FFFFFF", borderColor: "#2B2A26" } : { borderColor: "#D9CFB8", color: "#2B2A26" }}
+                >
+                  {v}
+                </button>
+              ))}
+            </div>
+            <label className="block text-xs font-semibold uppercase tracking-wide text-[#6B6858] mb-1">Geboren im Betrieb</label>
+            <BetriebInput
+              value={calf.betrieb}
+              onChange={(v) => setCalf({ ...calf, betrieb: v })}
+              options={betriebVorschlaege}
+              placeholder="Betriebsnummer oder Name"
+              className="w-full mb-3 px-3 py-2 rounded-lg border bg-white text-[#2B2A26] text-sm"
+              style={{ borderColor: "#9CA3AF" }}
+            />
+            {addError && <p className="text-[#BB201D] text-sm mb-3">{addError}</p>}
+            <button type="button" onClick={saveCalf} className="w-full py-2.5 rounded-lg font-semibold" style={{ backgroundColor: "#2B2A26", color: "#FFFFFF" }}>
+              Speichern
+            </button>
+          </div>
+        </div>
+      )}
 
       {addOpen && (
         <div
@@ -6590,6 +6750,10 @@ function RinderbestandApp() {
     };
     persist(animalsRef.current.map((a) => (a.id === id ? updated : a)));
     setPassAnimal((prev) => (prev && prev.id === id ? updated : prev));
+  };
+
+  const handleCreateAnimal = (data) => {
+    persist([...animalsRef.current, { ...data, id: generateId() }]);
   };
 
   const handleCreateUnregistered = (earTag, gender = "weiblich") => {
@@ -7743,6 +7907,7 @@ function RinderbestandApp() {
           onOpenAnimal={(a) => setPassAnimal(a)}
           onBack={() => setListView(null)}
           onCreateUnregistered={handleCreateUnregistered}
+          onCreateAnimal={handleCreateAnimal}
         />
       )}
 
