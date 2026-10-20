@@ -764,6 +764,53 @@ function RequiredMark({ show }) {
   );
 }
 
+// ===== Betriebe (Herkunft / Abgang) =====
+// Vorschlagsliste aus allen bisher eingetragenen Betrieben (Vorbesitzer, Abgang an)
+function collectBetriebe(animals) {
+  const set = new Set();
+  (animals || []).forEach((a) => {
+    const add = (v) => {
+      const t = String(v || "").replace(/^Betrieb\s+/i, "").trim();
+      if (t) set.add(t);
+    };
+    add(a.hitZugang && a.hitZugang.vorbesitzer);
+    add(a.verkauftAn);
+  });
+  return [...set].sort((x, y) => x.localeCompare(y, "de", { numeric: true }));
+}
+
+function BetriebInput({ value, onChange, options, placeholder, className, style }) {
+  const listId = useMemo(() => "betriebe-" + Math.random().toString(36).slice(2, 8), []);
+  return (
+    <>
+      <input
+        type="text"
+        list={listId}
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        placeholder={placeholder}
+        className={className}
+        style={style}
+        autoComplete="off"
+      />
+      <datalist id={listId}>
+        {(options || []).map((o) => (
+          <option key={o} value={o} />
+        ))}
+      </datalist>
+    </>
+  );
+}
+
+function herkunftText(a) {
+  const z = a.hitZugang || {};
+  if (z.art === "ZU") return `Zukauf${z.datum ? ` am ${formatDate(z.datum)}` : ""}${z.vorbesitzer ? ` von ${z.vorbesitzer}` : ""}`;
+  if (z.art === "GE") return "Im Betrieb geboren";
+  if (z.art === "ER") return `Ersterfassung${z.datum ? ` ${formatDate(z.datum)}` : ""}`;
+  if (z.art) return `${z.art}${z.datum ? ` ${formatDate(z.datum)}` : ""}${z.vorbesitzer ? ` von ${z.vorbesitzer}` : ""}`;
+  return "–";
+}
+
 function AnimalForm({ initial, initialCategory, initialMotherEarTag, registering, allAnimals, onSave, onCancel, onDelete, onCreateUnregistered }) {
   const [earTag, setEarTag] = useState(initial?.earTag || "");
   const [hasEarTag, setHasEarTag] = useState(initial ? !!initial.earTag : true);
@@ -780,6 +827,11 @@ function AnimalForm({ initial, initialCategory, initialMotherEarTag, registering
   const [auffaelligkeiten, setAuffaelligkeiten] = useState(initial?.auffaelligkeiten || "");
   const [stall, setStall] = useState(initial?.stall || "");
   const { staelle } = useStaelle();
+  const initialZugang = initial?.hitZugang || {};
+  const [herkunftArt, setHerkunftArt] = useState(initialZugang.art || "GE");
+  const [vorbesitzer, setVorbesitzer] = useState(initialZugang.vorbesitzer || "");
+  const [zugangDatum, setZugangDatum] = useState(initialZugang.art && initialZugang.art !== "GE" ? initialZugang.datum || "" : new Date().toISOString().slice(0, 10));
+  const betriebe = useMemo(() => collectBetriebe(allAnimals), [allAnimals]);
   const [error, setError] = useState("");
   const [invalidFields, setInvalidFields] = useState({});
   const [confirmingDelete, setConfirmingDelete] = useState(false);
@@ -865,6 +917,12 @@ function AnimalForm({ initial, initialCategory, initialMotherEarTag, registering
       merkmale: merkmale.trim(),
       auffaelligkeiten: auffaelligkeiten.trim(),
       stall,
+      hitZugang: {
+        ...(initial?.hitZugang || {}),
+        art: herkunftArt,
+        datum: herkunftArt === "GE" ? birthDate : zugangDatum,
+        vorbesitzer: herkunftArt === "GE" ? "" : vorbesitzer.trim(),
+      },
     });
   };
 
@@ -1159,6 +1217,49 @@ function AnimalForm({ initial, initialCategory, initialMotherEarTag, registering
           </>
         )}
 
+        <label className="block text-xs font-semibold uppercase tracking-wide text-[#6B6858] mb-1">Herkunft</label>
+        <div className="flex gap-2 mb-3">
+          {[
+            ["GE", "Im Betrieb geboren"],
+            ["ZU", "Von anderem Betrieb zugekauft"],
+          ].map(([v, l]) => (
+            <button
+              key={v}
+              type="button"
+              onClick={() => setHerkunftArt(v)}
+              className="flex-1 py-2 px-2 rounded-lg border text-xs font-semibold"
+              style={herkunftArt === v ? { backgroundColor: "#2B2A26", color: "#FFFFFF", borderColor: "#2B2A26" } : { borderColor: "#D9CFB8", color: "#2B2A26", backgroundColor: "#FFFFFF" }}
+            >
+              {l}
+            </button>
+          ))}
+        </div>
+        {herkunftArt !== "GE" && (
+          <>
+            {herkunftArt !== "ZU" && (
+              <p className="text-xs text-[#8A8672] mb-2">Bisher erfasst als „{herkunftText({ hitZugang: { art: herkunftArt } })}“.</p>
+            )}
+            <label className="block text-xs font-semibold uppercase tracking-wide text-[#6B6858] mb-1">Herkunftsbetrieb</label>
+            <BetriebInput
+              value={vorbesitzer}
+              onChange={setVorbesitzer}
+              options={betriebe}
+              placeholder="Betriebsnummer oder Name, z. B. 08 235 006 0210"
+              className="w-full mb-3 px-3 py-2 rounded-lg border text-sm bg-white"
+              style={{ borderColor: "#D9CFB8" }}
+            />
+            <label className="block text-xs font-semibold uppercase tracking-wide text-[#6B6858] mb-1">Zugangsdatum</label>
+            <input
+              type="date"
+              value={zugangDatum}
+              max={todayStr}
+              onChange={(e) => setZugangDatum(e.target.value)}
+              className="w-full mb-3 px-3 py-2 rounded-lg border text-sm bg-white"
+              style={{ borderColor: "#D9CFB8" }}
+            />
+          </>
+        )}
+
         <label className="block text-xs font-semibold uppercase tracking-wide text-[#6B6858] mb-1">Stall</label>
         <select
           value={stall}
@@ -1368,6 +1469,7 @@ function AnimalPass({ animal, allAnimals, onEdit, onClose, onOpenAnimal, onShowA
                   value={formatAgeShort(animal.birthDate, animal.category === "Abgänge" && animal.abgangsDatum ? animal.abgangsDatum : undefined)}
                 />
                 {animal.category !== "Abgänge" && <InfoRow label="Stall" value={animal.stall || "–"} />}
+                <InfoRow label="Herkunft" value={herkunftText(animal)} />
               </div>
             </div>
             <div>
@@ -1490,6 +1592,7 @@ function AnimalPass({ animal, allAnimals, onEdit, onClose, onOpenAnimal, onShowA
                   <>
                     <InfoRow label="Todesursache" value={animal.todesursache || "–"} />
                     <InfoRow label="Notizen/Grund" value={animal.todesnotizen || "–"} />
+                    <InfoRow label="Wohin" value={animal.verkauftAn || "–"} />
                   </>
                 )}
                 {animal.abgangsGrund === "verkauft" && (
@@ -2611,7 +2714,7 @@ function HistorieView({ animal, allAnimals, onBack, onOpenAnimal, initialTab, on
   );
 }
 
-function AbgangsFormular({ animal, onSave, onCancel }) {
+function AbgangsFormular({ animal, onSave, onCancel, betriebe = [] }) {
   const [grund, setGrund] = useState("");
   const [datum, setDatum] = useState(isoDateKey(new Date()));
   const [todesursache, setTodesursache] = useState("");
@@ -2634,7 +2737,7 @@ function AbgangsFormular({ animal, onSave, onCancel }) {
     } else {
       data.verkaufspreis = "";
       data.verkaufsgrund = "";
-      data.verkauftAn = "";
+      data.verkauftAn = verkauftAn;
       data.todesursache = todesursache;
       data.todesnotizen = todesnotizen;
     }
@@ -2758,12 +2861,26 @@ function AbgangsFormular({ animal, onSave, onCancel }) {
                 className="w-full mb-4 px-3 py-2 rounded-lg border text-sm bg-white"
                 style={{ borderColor: PASS_BLUE }}
               />
-              <label className="block text-sm font-semibold text-[#2B2A26] mb-1">Verkauft an</label>
-              <input
-                type="text"
+              <label className="block text-sm font-semibold text-[#2B2A26] mb-1">Verkauft an (Betrieb)</label>
+              <BetriebInput
                 value={verkauftAn}
-                onChange={(e) => setVerkauftAn(e.target.value)}
-                placeholder="z. B. Hof Meier, Musterstadt"
+                onChange={setVerkauftAn}
+                options={betriebe}
+                placeholder="Betriebsnummer oder Name, z. B. 08 215 090 0477"
+                className="w-full mb-4 px-3 py-2 rounded-lg border text-sm bg-white"
+                style={{ borderColor: PASS_BLUE }}
+              />
+            </>
+          )}
+
+          {grund === "verendet" && (
+            <>
+              <label className="block text-sm font-semibold text-[#2B2A26] mb-1">Wohin (z. B. Tierkörperbeseitigung)</label>
+              <BetriebInput
+                value={verkauftAn}
+                onChange={setVerkauftAn}
+                options={betriebe}
+                placeholder="Betrieb oder Stelle, die das Tier abgeholt hat"
                 className="w-full mb-4 px-3 py-2 rounded-lg border text-sm bg-white"
                 style={{ borderColor: PASS_BLUE }}
               />
@@ -2920,7 +3037,7 @@ function StallbuchView({ animal, allAnimals = [], onBack, onOpenAnimal, onUpdate
     : "";
   const abgang =
     current.category === "Abgänge"
-      ? `${current.abgangsDatum ? formatDate(current.abgangsDatum) : "–"} · ${current.abgangsGrund === "verkauft" ? "verkauft" : current.abgangsGrund === "verendet" ? "verendet" : "Abgang"}${current.verkauftAn ? ` an ${current.verkauftAn}` : ""}`
+      ? `${current.abgangsDatum ? formatDate(current.abgangsDatum) : "–"} · ${current.abgangsGrund === "verkauft" ? "verkauft" : current.abgangsGrund === "verendet" ? "verendet" : "Abgang"}${current.verkauftAn ? ` → ${current.verkauftAn}` : ""}`
       : "";
 
   // Abkalbe- und Nachzuchtdaten
@@ -7187,6 +7304,7 @@ function RinderbestandApp() {
       {abgangAnimal && (
         <AbgangsFormular
           animal={abgangAnimal}
+          betriebe={collectBetriebe(animals)}
           onCancel={() => {
             if (abgangReturnTo) setPassAnimal(abgangReturnTo);
             setAbgangReturnTo(null);
