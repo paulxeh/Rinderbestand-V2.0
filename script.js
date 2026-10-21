@@ -2372,13 +2372,12 @@ function StammbaumSearch({ animals, onSelect }) {
         .slice(0, 8);
 
   return (
-    <div className="relative mb-4">
+    <div className="relative mt-4">
       <input
         value={query}
         onChange={(e) => setQuery(e.target.value)}
-        placeholder="Tier suchen (Ohrmarke oder Name)…"
-        className="w-full px-3 py-2 rounded-lg border bg-white text-[#2B2A26] text-sm focus:outline-none focus:ring-2 focus:ring-[#4C6B3F]"
-        style={{ borderColor: "#9CA3AF" }}
+        placeholder="Suche nach Ohrmarke oder Name…"
+        className="w-full px-3 py-2 rounded-lg border border-[#D9CFB8] bg-white text-[#2B2A26] text-sm focus:outline-none focus:ring-2 focus:ring-[#4C6B3F]"
       />
       {q && (
         <div className="mt-1 rounded-lg border border-[#D9CFB8] bg-white shadow-lg overflow-hidden">
@@ -2414,10 +2413,15 @@ function StammbaumSearch({ animals, onSelect }) {
 
 function StammbaumView({ animals, onBack, onOpenAnimal }) {
   const [pedigreeAnimal, setPedigreeAnimal] = useState(null);
+  const [reiter, setReiter] = useState("bestand"); // bestand | gesamt
+
+  // Bestand = nur die 4 Hauptabschnitte, Gesamt = alle Tiere (auch Abgänge und Unregistrierte)
+  const bestandAnimals = useMemo(() => animals.filter((a) => CATEGORIES.includes(a.category)), [animals]);
+  const shown = reiter === "bestand" ? bestandAnimals : animals;
 
   const byMother = useMemo(() => {
     const map = {};
-    animals.forEach((a) => {
+    shown.forEach((a) => {
       if (a.motherEarTag) {
         const key = cleanEarTag(a.motherEarTag);
         if (!map[key]) map[key] = [];
@@ -2425,34 +2429,59 @@ function StammbaumView({ animals, onBack, onOpenAnimal }) {
       }
     });
     return map;
-  }, [animals]);
+  }, [shown]);
 
   const roots = useMemo(() => {
-    const earTags = new Set(animals.filter((a) => a.earTag).map((a) => cleanEarTag(a.earTag)));
-    return animals
+    const earTags = new Set(shown.filter((a) => a.earTag).map((a) => cleanEarTag(a.earTag)));
+    return shown
       .filter((a) => !a.motherEarTag || !earTags.has(cleanEarTag(a.motherEarTag)))
       .sort((a, b) => (a.earTag || "").localeCompare(b.earTag || ""));
-  }, [animals]);
+  }, [shown]);
+
+  const Tile = ({ id, label, value }) => (
+    <button
+      type="button"
+      onClick={() => {
+        setReiter(id);
+        setPedigreeAnimal(null);
+      }}
+      className="h-[68px] rounded-lg px-1 py-2 flex flex-col items-center justify-center text-center transition overflow-hidden border"
+      style={{ backgroundColor: "#FFFFFF", color: "#2B2A26", borderColor: "#D9CFB8", boxShadow: reiter === id ? "0 0 0 2px #2B2A26 inset" : undefined }}
+    >
+      <p className="text-[10px] uppercase tracking-wide truncate w-full" style={{ opacity: 0.85 }}>{label}</p>
+      <p className="font-slab font-bold" style={{ fontSize: "20px", lineHeight: "1.2", fontVariantNumeric: "tabular-nums", fontFamily: "'Arvo', serif" }}>
+        {value}
+      </p>
+    </button>
+  );
 
   return (
     <div className="fixed inset-0 z-30 overflow-y-auto" style={{ backgroundColor: "#F9EFE4" }}>
-      <div
-        className="sticky top-0 z-10 backdrop-blur border-b border-[#D9CFB8] px-5 pt-6 pb-4 flex items-center justify-between gap-3"
-        style={{ backgroundColor: "rgba(249, 239, 228, 0.95)" }}
-      >
-        <h1 className="font-slab text-lg font-bold text-[#2B2A26]">Stammbaum</h1>
-        <button
-          type="button"
-          onClick={onBack}
-          className="shrink-0 text-xs font-semibold rounded-lg px-3 py-1.5 transition"
-          style={{ color: "#FFFFFF", backgroundColor: "#2B2A26" }}
-        >
-          Zurück zur Hauptseite
-        </button>
-      </div>
+      <header className="border-b border-[#D9CFB8] px-5 pt-6 pb-4" style={{ backgroundColor: "#F9EFE4" }}>
+        <p className="text-xs uppercase tracking-[0.2em] text-[#6B6858] mb-1">Übersicht</p>
+        <h1 className="font-slab text-2xl font-bold text-[#2B2A26]">Stammbaum</h1>
+
+        <div className="grid grid-cols-2 gap-2 mt-4">
+          <Tile id="bestand" label="Bestand" value={bestandAnimals.length} />
+          <Tile id="gesamt" label="Gesamt" value={animals.length} />
+        </div>
+
+        <StammbaumSearch animals={shown} onSelect={setPedigreeAnimal} />
+
+        <div className="flex items-center justify-end gap-2 mt-3">
+          <button
+            type="button"
+            onClick={onBack}
+            className="text-xs font-semibold rounded-lg px-3 py-1.5 transition whitespace-nowrap"
+            style={{ color: "#FFFFFF", backgroundColor: "#2B2A26", border: "1px solid #2B2A26" }}
+          >
+            Zurück
+          </button>
+        </div>
+      </header>
+
       <div className="px-5 py-4 pb-10">
-        <StammbaumSearch animals={animals} onSelect={setPedigreeAnimal} />
-        {animals.length === 0 ? (
+        {shown.length === 0 ? (
           <p className="text-sm text-[#8A8672] text-center mt-10">Noch keine Tiere erfasst.</p>
         ) : pedigreeAnimal ? (
           <div
