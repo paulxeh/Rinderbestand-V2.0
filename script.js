@@ -2510,16 +2510,18 @@ function StammbaumView({ animals, onBack, onOpenAnimal }) {
             style={{ borderColor: "#B7C9A8", backgroundColor: "rgba(255,255,255,0.88)" }}
           >
             <TreeBackgroundSVG />
-            <div className="relative">
+            {/* Jede Familie (Stammtier mit allen Nachkommen) als eigener Block mit Abstand, ohne Linie zur nächsten Familie */}
+            <div className="relative flex flex-col gap-4">
               {roots.map((root) => (
-                <TreeNode
-                  key={root.id}
-                  animal={root}
-                  byMother={byMother}
-                  depth={0}
-                  onOpenAnimal={onOpenAnimal}
-                  visited={new Set()}
-                />
+                <div key={root.id}>
+                  <TreeNode
+                    animal={root}
+                    byMother={byMother}
+                    depth={0}
+                    onOpenAnimal={onOpenAnimal}
+                    visited={new Set()}
+                  />
+                </div>
               ))}
             </div>
           </div>
