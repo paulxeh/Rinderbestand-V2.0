@@ -3670,7 +3670,7 @@ function CalendarNavPicker({ open, onClose, children }) {
   );
 }
 
-function BirthCalendar({ birthsByDate, onOpenAnimal, animals, onUpdateAnimal, onOpenBreedingHistory }) {
+function BirthCalendar({ birthsByDate, onOpenAnimal, animals, onUpdateAnimal, onOpenBreedingHistory, compact, onOpenFull, pageMode }) {
   const mobileScroll = useContext(MobileScrollContext);
   const [view, setView] = useState("monat");
   const [month, setMonth] = useState(() => {
@@ -3779,10 +3779,169 @@ function BirthCalendar({ birthsByDate, onOpenAnimal, animals, onUpdateAnimal, on
   const selEvents = birthsByDate[selKey] || [];
   const selLabel = selectedDay.toLocaleDateString("de-DE", { day: "2-digit", month: "long", year: "numeric" });
 
+  // Ereignisse eines Tages (wird in der Tagesansicht und im kleinen Abschnitt auf der Hauptseite benutzt)
+  const renderDayEvents = (day) => {
+    const dISO = isoDateKey(day);
+    const birthsHere = birthsByDate[dISO] || [];
+    const besamungHere = animalsWithHistoryEventOn(breedingAnimals, ["besamung"], dISO);
+    const nextHeatHere = breedingAnimals.filter((a) => {
+      const next = nextExpectedHeat(a);
+      return next && isoDateKey(next) === dISO;
+    });
+    const missedHere = animalsWithHistoryEventOn(breedingAnimals, ["ausgefallen"], dISO);
+    const pregnancyConfirmedHere = animalsWithHistoryEventOn(breedingAnimals, ["schwangerschaft_bestaetigt", "schwangerschaft_direkt"], dISO);
+    const verendetHere = verendeteAnimals.filter((a) => a.abgangsDatum === dISO);
+    const verkauftHere = verkaufteAnimals.filter((a) => a.abgangsDatum === dISO);
+    const umgestalltHere = animalsWithHistoryEventOn(animals || [], ["stall_umgestallt"], dISO);
+    const nothing = birthsHere.length === 0 && besamungHere.length === 0 && nextHeatHere.length === 0 && missedHere.length === 0 && pregnancyConfirmedHere.length === 0 && verendetHere.length === 0 && verkauftHere.length === 0 && umgestalltHere.length === 0;
+    if (nothing) {
+      return (
+        <p className="text-sm" style={{ color: "#B0A98F" }}>
+          Keine Ereignisse an diesem Tag
+        </p>
+      );
+    }
+    return (
+      <div className="flex flex-col gap-2">
+        {birthsHere.map((a) => (
+          <button
+            key={`geburt-${a.id}`}
+            type="button"
+            onClick={() => onOpenAnimal(a)}
+            className="flex items-center justify-center gap-2 text-sm font-semibold"
+            style={{ color: "#2B2A26" }}
+          >
+            <CakeIcon color="#359662" size={18} />
+            {formatEarTag(a.earTag) || "ausstehend"}
+            {a.name ? ` – ${a.name}` : ""}
+          </button>
+        ))}
+        {besamungHere.map((a) => (
+          <button
+            key={`besamung-${a.id}`}
+            type="button"
+            onClick={() => onOpenAnimal(a)}
+            className="flex items-center justify-center gap-2 text-sm font-semibold"
+            style={{ color: "#2B2A26" }}
+          >
+            <GloveIcon color="#E05F37" size={18} />
+            {formatEarTag(a.earTag) || "ausstehend"}
+            {a.name ? ` – ${a.name}` : ""} · Besamung
+          </button>
+        ))}
+        {nextHeatHere.map((a) => (
+          <button
+            key={`naechste-${a.id}`}
+            type="button"
+            onClick={() => onOpenAnimal(a)}
+            className="flex items-center justify-center gap-2 text-sm font-semibold"
+            style={{ color: "#2B2A26" }}
+          >
+            <span className="w-3.5 h-3.5 rounded-full shrink-0" style={{ backgroundColor: "#D8E9D6", border: "1px solid #B0BE9B" }} />
+            {formatEarTag(a.earTag) || "ausstehend"}
+            {a.name ? ` – ${a.name}` : ""} · Nächste erwartete Brunst
+          </button>
+        ))}
+        {missedHere.map((a) => (
+          <button
+            key={`ausgefallen-${a.id}`}
+            type="button"
+            onClick={() => onOpenAnimal(a)}
+            className="flex items-center justify-center gap-2 text-sm font-semibold"
+            style={{ color: "#BB201D" }}
+          >
+            <CrossIcon color="#BB201D" size={18} />
+            {formatEarTag(a.earTag) || "ausstehend"}
+            {a.name ? ` – ${a.name}` : ""} · Ausgefallene Brunst
+          </button>
+        ))}
+        {pregnancyConfirmedHere.map((a) => (
+          <button
+            key={`traechtig-${a.id}`}
+            type="button"
+            onClick={() => onOpenAnimal(a)}
+            className="flex items-center justify-center gap-2 text-sm font-semibold"
+            style={{ color: "#2B2A26" }}
+          >
+            <HeartIcon color="#E68B9D" size={18} />
+            {formatEarTag(a.earTag) || "ausstehend"}
+            {a.name ? ` – ${a.name}` : ""} · Trächtigkeit bestätigt
+          </button>
+        ))}
+        {verendetHere.map((a) => (
+          <button
+            key={`verendet-${a.id}`}
+            type="button"
+            onClick={() => onOpenAnimal(a)}
+            className="flex items-center justify-center gap-2 text-sm font-semibold"
+            style={{ color: "#BB201D" }}
+          >
+            <SkullIcon color="#BB201D" size={18} />
+            {formatEarTag(a.earTag) || "ausstehend"}
+            {a.name ? ` – ${a.name}` : ""} · Verendung
+          </button>
+        ))}
+        {verkauftHere.map((a) => (
+          <button
+            key={`verkauft-${a.id}`}
+            type="button"
+            onClick={() => onOpenAnimal(a)}
+            className="flex items-center justify-center gap-2 text-sm font-semibold"
+            style={{ color: "#2B2A26" }}
+          >
+            <EuroIcon color="#FBCD49" size={18} />
+            {formatEarTag(a.earTag) || "ausstehend"}
+            {a.name ? ` – ${a.name}` : ""} · Verkauft
+          </button>
+        ))}
+        {umgestalltHere.map((a) => (
+          <button
+            key={`umgestallt-${a.id}`}
+            type="button"
+            onClick={() => onOpenAnimal(a)}
+            className="flex items-center justify-center gap-2 text-sm font-semibold"
+            style={{ color: "#2B2A26" }}
+          >
+            <ArrowUpDownIcon color="#B97FA8" size={18} />
+            {formatEarTag(a.earTag) || "ausstehend"}
+            {a.name ? ` – ${a.name}` : ""} · Umgestallt
+          </button>
+        ))}
+      </div>
+    );
+  };
+
+  // Kleiner Abschnitt auf der Hauptseite: nur die Ereignisse von heute, der ganze Kalender hat eine eigene Seite
+  if (compact) {
+    const heute = new Date();
+    return (
+      <section className="mb-4 rounded-xl border border-[#D9CFB8] bg-white p-3">
+        <button
+          type="button"
+          onClick={onOpenFull}
+          className="w-full flex items-center justify-between gap-2 mb-2"
+          aria-label="Kalender öffnen"
+        >
+          <span className="flex items-baseline gap-2 min-w-0">
+            <span className="font-slab text-sm font-bold text-[#2B2A26] whitespace-nowrap">Kalender</span>
+            <span className="text-xs text-[#6B6858] truncate">
+              Heute, {heute.toLocaleDateString("de-DE", { day: "2-digit", month: "long", year: "numeric" })}
+            </span>
+          </span>
+          <ChevronRight size={18} style={{ color: "#2B2A26" }} className="shrink-0" />
+        </button>
+        <div className="rounded-xl border p-3 text-center" style={{ borderColor: "#D9CFB8" }}>
+          {renderDayEvents(heute)}
+        </div>
+      </section>
+    );
+  }
+
   return (
     <>
     <section className="mb-4 rounded-xl border border-[#D9CFB8] bg-white p-3 relative">
       <div className="flex items-center gap-2 mb-3 relative z-20">
+        {!pageMode && (
         <button
           type="button"
           onClick={() => setCollapsed((v) => !v)}
@@ -3795,6 +3954,7 @@ function BirthCalendar({ birthsByDate, onOpenAnimal, animals, onUpdateAnimal, on
             style={{ color: "#6B6858", transform: collapsed ? "rotate(0deg)" : "rotate(90deg)", transition: "transform 0.15s" }}
           />
         </button>
+        )}
         <div className="flex-1 min-w-0 flex rounded-full border border-[#D9CFB8] bg-[#F9EFE4] p-0.5 gap-0.5 overflow-x-auto">
           {[
             ["tag", "Tag"],
@@ -3969,135 +4129,7 @@ function BirthCalendar({ birthsByDate, onOpenAnimal, animals, onUpdateAnimal, on
             <NavArrowButton onClick={goNextDay} dir="right" />
           </div>
           <div className="rounded-xl border p-4 text-center" style={{ borderColor: "#D9CFB8" }}>
-            {(() => {
-              const dISO = isoDateKey(selectedDay);
-              const besamungHere = animalsWithHistoryEventOn(breedingAnimals, ["besamung"], dISO);
-              const nextHeatHere = breedingAnimals.filter((a) => {
-                const next = nextExpectedHeat(a);
-                return next && isoDateKey(next) === dISO;
-              });
-              const missedHere = animalsWithHistoryEventOn(breedingAnimals, ["ausgefallen"], dISO);
-              const pregnancyConfirmedHere = animalsWithHistoryEventOn(breedingAnimals, ["schwangerschaft_bestaetigt", "schwangerschaft_direkt"], dISO);
-              const verendetHere = verendeteAnimals.filter((a) => a.abgangsDatum === dISO);
-              const verkauftHere = verkaufteAnimals.filter((a) => a.abgangsDatum === dISO);
-              const umgestalltHere = animalsWithHistoryEventOn(animals || [], ["stall_umgestallt"], dISO);
-              const nothing = selEvents.length === 0 && besamungHere.length === 0 && nextHeatHere.length === 0 && missedHere.length === 0 && pregnancyConfirmedHere.length === 0 && verendetHere.length === 0 && verkauftHere.length === 0 && umgestalltHere.length === 0;
-              if (nothing) {
-                return (
-                  <p className="text-sm" style={{ color: "#B0A98F" }}>
-                    Keine Ereignisse an diesem Tag
-                  </p>
-                );
-              }
-              return (
-                <div className="flex flex-col gap-2">
-                  {selEvents.map((a) => (
-                    <button
-                      key={`geburt-${a.id}`}
-                      type="button"
-                      onClick={() => onOpenAnimal(a)}
-                      className="flex items-center justify-center gap-2 text-sm font-semibold"
-                      style={{ color: "#2B2A26" }}
-                    >
-                      <CakeIcon color="#359662" size={18} />
-                      {formatEarTag(a.earTag) || "ausstehend"}
-                      {a.name ? ` – ${a.name}` : ""}
-                    </button>
-                  ))}
-                  {besamungHere.map((a) => (
-                    <button
-                      key={`besamung-${a.id}`}
-                      type="button"
-                      onClick={() => onOpenAnimal(a)}
-                      className="flex items-center justify-center gap-2 text-sm font-semibold"
-                      style={{ color: "#2B2A26" }}
-                    >
-                      <GloveIcon color="#E05F37" size={18} />
-                      {formatEarTag(a.earTag) || "ausstehend"}
-                      {a.name ? ` – ${a.name}` : ""} · Besamung
-                    </button>
-                  ))}
-                  {nextHeatHere.map((a) => (
-                    <button
-                      key={`naechste-${a.id}`}
-                      type="button"
-                      onClick={() => onOpenAnimal(a)}
-                      className="flex items-center justify-center gap-2 text-sm font-semibold"
-                      style={{ color: "#2B2A26" }}
-                    >
-                      <span className="w-3.5 h-3.5 rounded-full shrink-0" style={{ backgroundColor: "#D8E9D6", border: "1px solid #B0BE9B" }} />
-                      {formatEarTag(a.earTag) || "ausstehend"}
-                      {a.name ? ` – ${a.name}` : ""} · Nächste erwartete Brunst
-                    </button>
-                  ))}
-                  {missedHere.map((a) => (
-                    <button
-                      key={`ausgefallen-${a.id}`}
-                      type="button"
-                      onClick={() => onOpenAnimal(a)}
-                      className="flex items-center justify-center gap-2 text-sm font-semibold"
-                      style={{ color: "#BB201D" }}
-                    >
-                      <CrossIcon color="#BB201D" size={18} />
-                      {formatEarTag(a.earTag) || "ausstehend"}
-                      {a.name ? ` – ${a.name}` : ""} · Ausgefallene Brunst
-                    </button>
-                  ))}
-                  {pregnancyConfirmedHere.map((a) => (
-                    <button
-                      key={`traechtig-${a.id}`}
-                      type="button"
-                      onClick={() => onOpenAnimal(a)}
-                      className="flex items-center justify-center gap-2 text-sm font-semibold"
-                      style={{ color: "#2B2A26" }}
-                    >
-                      <HeartIcon color="#E68B9D" size={18} />
-                      {formatEarTag(a.earTag) || "ausstehend"}
-                      {a.name ? ` – ${a.name}` : ""} · Trächtigkeit bestätigt
-                    </button>
-                  ))}
-                  {verendetHere.map((a) => (
-                    <button
-                      key={`verendet-${a.id}`}
-                      type="button"
-                      onClick={() => onOpenAnimal(a)}
-                      className="flex items-center justify-center gap-2 text-sm font-semibold"
-                      style={{ color: "#BB201D" }}
-                    >
-                      <SkullIcon color="#BB201D" size={18} />
-                      {formatEarTag(a.earTag) || "ausstehend"}
-                      {a.name ? ` – ${a.name}` : ""} · Verendung
-                    </button>
-                  ))}
-                  {verkauftHere.map((a) => (
-                    <button
-                      key={`verkauft-${a.id}`}
-                      type="button"
-                      onClick={() => onOpenAnimal(a)}
-                      className="flex items-center justify-center gap-2 text-sm font-semibold"
-                      style={{ color: "#2B2A26" }}
-                    >
-                      <EuroIcon color="#FBCD49" size={18} />
-                      {formatEarTag(a.earTag) || "ausstehend"}
-                      {a.name ? ` – ${a.name}` : ""} · Verkauft
-                    </button>
-                  ))}
-                  {umgestalltHere.map((a) => (
-                    <button
-                      key={`umgestallt-${a.id}`}
-                      type="button"
-                      onClick={() => onOpenAnimal(a)}
-                      className="flex items-center justify-center gap-2 text-sm font-semibold"
-                      style={{ color: "#2B2A26" }}
-                    >
-                      <ArrowUpDownIcon color="#B97FA8" size={18} />
-                      {formatEarTag(a.earTag) || "ausstehend"}
-                      {a.name ? ` – ${a.name}` : ""} · Umgestallt
-                    </button>
-                  ))}
-                </div>
-              );
-            })()}
+            {renderDayEvents(selectedDay)}
           </div>
         </div>
       )}
@@ -6328,6 +6360,37 @@ function jahresKennzahlen(animals, jahr, stichtag, kidsByMother) {
   return r;
 }
 
+function KalenderView({ birthsByDate, animals, onOpenAnimal, onUpdateAnimal, onOpenBreedingHistory, onBack }) {
+  return (
+    <div className="fixed inset-0 z-30 overflow-y-auto" style={{ backgroundColor: "#F9EFE4" }}>
+      <header className="border-b border-[#D9CFB8] px-5 pt-6 pb-4" style={{ backgroundColor: "#F9EFE4" }}>
+        <p className="text-xs uppercase tracking-[0.2em] text-[#6B6858] mb-1">Übersicht</p>
+        <h1 className="font-slab text-2xl font-bold text-[#2B2A26]">Kalender</h1>
+        <div className="flex items-center justify-end gap-2 mt-3">
+          <button
+            type="button"
+            onClick={onBack}
+            className="text-xs font-semibold rounded-lg px-3 py-1.5 transition whitespace-nowrap"
+            style={{ color: "#FFFFFF", backgroundColor: "#2B2A26", border: "1px solid #2B2A26" }}
+          >
+            Zurück
+          </button>
+        </div>
+      </header>
+      <div className="px-5 py-4 pb-10">
+        <BirthCalendar
+          pageMode
+          birthsByDate={birthsByDate}
+          animals={animals}
+          onOpenAnimal={onOpenAnimal}
+          onUpdateAnimal={onUpdateAnimal}
+          onOpenBreedingHistory={onOpenBreedingHistory}
+        />
+      </div>
+    </div>
+  );
+}
+
 function JahresuebersichtView({ animals, onBack }) {
   const [reiter, setReiter] = useState("aktuell"); // aktuell | vergangen
   const heute = isoDateKey(new Date());
@@ -6906,6 +6969,7 @@ function RinderbestandApp() {
   const [staelleOpen, setStaelleOpen] = useState(false);
   const [betriebeOpen, setBetriebeOpen] = useState(false);
   const [jahresOpen, setJahresOpen] = useState(false);
+  const [kalenderOpen, setKalenderOpen] = useState(false);
   const [brunstlisteOpen, setBrunstlisteOpen] = useState(false);
   const [mainMenuOpen, setMainMenuOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -7250,6 +7314,7 @@ function RinderbestandApp() {
     if (staelleOpen) return "#/staelle";
     if (betriebeOpen) return "#/betriebe";
     if (jahresOpen) return "#/jahresuebersicht";
+    if (kalenderOpen) return "#/kalender";
     if (stammbaumOpen) return "#/stammbaum";
     if (stallbuchAnimal) return `#/tier/${rid(stallbuchAnimal)}/stallbuch`;
     if (historieAnimal) return `#/tier/${rid(historieAnimal)}/historie/${encodeURIComponent(historieTab)}`;
@@ -7282,6 +7347,7 @@ function RinderbestandApp() {
     setStaelleOpen(false);
     setBetriebeOpen(false);
     setJahresOpen(false);
+    setKalenderOpen(false);
     setBrunstlisteOpen(false);
     setFormOpen(false);
     setEditing(null);
@@ -7305,6 +7371,7 @@ function RinderbestandApp() {
     if (p0 === "staelle") return setStaelleOpen(true);
     if (p0 === "betriebe") return setBetriebeOpen(true);
     if (p0 === "jahresuebersicht") return setJahresOpen(true);
+    if (p0 === "kalender") return setKalenderOpen(true);
     if (p0 === "brunstliste") return setBrunstlisteOpen(true);
     if (p0 === "neu") {
       if (!isAdmin) return;
@@ -7513,14 +7580,12 @@ function RinderbestandApp() {
           <>
             <NotesBox />
             <BirthCalendar
+              compact
+              onOpenFull={() => setKalenderOpen(true)}
               birthsByDate={birthsByDate}
               onOpenAnimal={(a) => setPassAnimal(a)}
               animals={animals}
               onUpdateAnimal={handleUpdateField}
-              onOpenBreedingHistory={(a) => {
-                setHistorieAnimal(a);
-                setHistorieTab("brunsthistorie");
-              }}
             />
             <div className="flex flex-col gap-2 mb-6">
               {[
@@ -8200,6 +8265,21 @@ function RinderbestandApp() {
       {staelleOpen && <StaelleView onBack={() => setStaelleOpen(false)} />}
 
       {jahresOpen && <JahresuebersichtView animals={animals} onBack={() => setJahresOpen(false)} />}
+
+      {kalenderOpen && (
+        <KalenderView
+          birthsByDate={birthsByDate}
+          animals={animals}
+          onOpenAnimal={(a) => setPassAnimal(a)}
+          onUpdateAnimal={handleUpdateField}
+          onOpenBreedingHistory={(a) => {
+            setHistorieAnimal(a);
+            setHistorieTab("brunsthistorie");
+            setKalenderOpen(false);
+          }}
+          onBack={() => setKalenderOpen(false)}
+        />
+      )}
 
       {betriebeOpen && (
         <BetriebeView animals={animals} onBack={() => setBetriebeOpen(false)} onOpenAnimal={(a) => setPassAnimal(a)} />
