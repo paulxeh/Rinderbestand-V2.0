@@ -7476,20 +7476,7 @@ function RinderbestandApp() {
           </>
         ) : (
           <>
-            <div className="flex items-end justify-between gap-2">
-              <div className="min-w-0">
-                <div className="flex items-center gap-2 text-[#6B6858] text-xs uppercase tracking-[0.2em] mb-1">
-                  <TagIcon size={14} />
-                  <span>Bestandsbuch</span>
-                </div>
-                {/* Schrift wird auf schmalen Handys kleiner, damit Titel und Kuh in eine Zeile passen */}
-                <h1
-                  className="font-slab font-bold text-[#2B2A26] whitespace-nowrap"
-                  style={{ fontSize: "clamp(17px, calc((100vw - 40px - 96px) / 12), 24px)", lineHeight: 1.2, margin: 0 }}
-                >
-                  Rinderbestandsregister
-                </h1>
-              </div>
+            <div className="flex items-end gap-3">
               <img
                 src="kuh.png?v=2"
                 alt=""
@@ -7497,6 +7484,15 @@ function RinderbestandApp() {
                 className="shrink-0"
                 style={{ height: 52, width: "auto", display: "block", marginBottom: "0.2em" }}
               />
+              <div className="min-w-0">
+                {/* Schrift wird auf schmalen Handys kleiner, damit Kuh und Titel in eine Zeile passen */}
+                <h1
+                  className="font-slab font-bold text-[#2B2A26] whitespace-nowrap"
+                  style={{ fontSize: "clamp(17px, calc((100vw - 40px - 100px) / 12), 24px)", lineHeight: 1.2, margin: 0 }}
+                >
+                  Rinderbestandsregister
+                </h1>
+              </div>
             </div>
             {!cloud.configured && (
               <p className="text-[11px] text-[#8A8672] mt-0.5">Testversion · Daten nur auf diesem Gerät gespeichert</p>
