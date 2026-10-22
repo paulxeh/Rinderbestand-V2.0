@@ -7476,9 +7476,18 @@ function RinderbestandApp() {
           </>
         ) : (
           <>
-            <div className="flex items-center gap-2 text-[#6B6858] text-xs uppercase tracking-[0.2em] mb-1">
-              <TagIcon size={14} />
-              <span>Bestandsbuch</span>
+            <div className="flex items-end justify-between gap-3 mb-1">
+              <div className="flex items-center gap-2 text-[#6B6858] text-xs uppercase tracking-[0.2em]">
+                <TagIcon size={14} />
+                <span>Bestandsbuch</span>
+              </div>
+              <img
+                src="kuh.png?v=2"
+                alt=""
+                aria-hidden="true"
+                className="shrink-0"
+                style={{ height: 64, width: "auto", marginTop: -8 }}
+              />
             </div>
             <h1 className="font-slab text-2xl font-bold text-[#2B2A26]">Rinderbestandsregister</h1>
             {!cloud.configured && (
