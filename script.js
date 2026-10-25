@@ -198,6 +198,116 @@ window.storage = {
   },
 };
 
+/* --- Bilder (Profilbild, Fotos zu Merkmalen/Auffälligkeiten) --- */
+// Die Tiere speichern nur die Bild-Nummern (z.B. animal.profilbild = "b_...").
+// Die Bilder selbst liegen getrennt:
+//  - online: Firestore-Sammlung "bilder" (ein Dokument je Bild, verkleinert auf < 800 KB)
+//  - Testversion: IndexedDB im Browser (localStorage wäre für Fotos zu klein)
+const BILD_MAX_KANTE = 1280;
+const BILD_MAX_ZEICHEN = 800000; // Firestore erlaubt max. 1 MB je Dokument
+const bildCache = new Map(); // id -> dataURL
+const bildLaden = new Map(); // id -> Promise
+
+function bildDb() {
+  if (!bildDb.p) {
+    bildDb.p = new Promise((resolve, reject) => {
+      const req = indexedDB.open("rinderbestand-bilder", 1);
+      req.onupgradeneeded = () => req.result.createObjectStore("bilder");
+      req.onsuccess = () => resolve(req.result);
+      req.onerror = () => reject(req.error);
+    });
+  }
+  return bildDb.p;
+}
+function idbTx(mode, fn) {
+  return bildDb().then(
+    (db) =>
+      new Promise((resolve, reject) => {
+        const tx = db.transaction("bilder", mode);
+        const req = fn(tx.objectStore("bilder"));
+        tx.oncomplete = () => resolve(req && req.result);
+        tx.onerror = () => reject(tx.error);
+      })
+  );
+}
+
+// Foto aus der Kamera/Galerie verkleinern und als JPEG-Text zurückgeben
+function bildVerkleinern(file) {
+  return new Promise((resolve, reject) => {
+    const url = URL.createObjectURL(file);
+    const img = new Image();
+    img.onload = () => {
+      URL.revokeObjectURL(url);
+      let kante = BILD_MAX_KANTE;
+      let qualitaet = 0.82;
+      for (let versuch = 0; versuch < 8; versuch++) {
+        const f = Math.min(1, kante / Math.max(img.naturalWidth, img.naturalHeight));
+        const c = document.createElement("canvas");
+        c.width = Math.max(1, Math.round(img.naturalWidth * f));
+        c.height = Math.max(1, Math.round(img.naturalHeight * f));
+        const ctx = c.getContext("2d");
+        ctx.fillStyle = "#FFFFFF";
+        ctx.fillRect(0, 0, c.width, c.height);
+        ctx.drawImage(img, 0, 0, c.width, c.height);
+        const data = c.toDataURL("image/jpeg", qualitaet);
+        if (data.length <= BILD_MAX_ZEICHEN) return resolve(data);
+        if (qualitaet > 0.6) qualitaet -= 0.1;
+        else kante = Math.round(kante * 0.8);
+      }
+      reject(new Error("Bild ist zu groß"));
+    };
+    img.onerror = () => {
+      URL.revokeObjectURL(url);
+      reject(new Error("Datei ist kein lesbares Bild"));
+    };
+    img.src = url;
+  });
+}
+
+window.bilder = {
+  async speichern(file) {
+    const data = await bildVerkleinern(file);
+    const id = "b_" + Date.now().toString(36) + "_" + Math.random().toString(36).slice(2, 8);
+    if (cloud.user) {
+      await cloud.db
+        .collection("bilder")
+        .doc(id)
+        .set({ data, updatedAt: Date.now(), updatedBy: (cloud.user && cloud.user.email) || "" });
+    } else {
+      await idbTx("readwrite", (st) => st.put(data, id));
+    }
+    bildCache.set(id, data);
+    return id;
+  },
+  laden(id) {
+    if (!id) return Promise.resolve(null);
+    if (bildCache.has(id)) return Promise.resolve(bildCache.get(id));
+    if (bildLaden.has(id)) return bildLaden.get(id);
+    const p = (cloud.user
+      ? cloud.db.collection("bilder").doc(id).get().then((d) => (d.exists && d.data() ? d.data().data : null))
+      : idbTx("readonly", (st) => st.get(id))
+    )
+      .then((data) => {
+        if (data) bildCache.set(id, data);
+        return data || null;
+      })
+      .catch(() => null)
+      .finally(() => bildLaden.delete(id));
+    bildLaden.set(id, p);
+    return p;
+  },
+  async loeschen(id) {
+    if (!id) return;
+    bildCache.delete(id);
+    try {
+      if (cloud.user) await cloud.db.collection("bilder").doc(id).delete();
+      else await idbTx("readwrite", (st) => st.delete(id));
+    } catch (e) {
+      console.error("Bild löschen fehlgeschlagen", e);
+    }
+  },
+};
+
 /* --- Service Worker (optional, nur bei https/localhost) --- */
 // Service Worker fürs Offline-Caching (funktioniert nur, wenn die Seite über
 // https oder localhost aufgerufen wird - nicht bei direktem Öffnen als Datei).
@@ -1424,6 +1534,257 @@ function moveOptions(animal) {
   return [];
 }
 
+function useBild(id) {
+  // undefined = lädt noch, null = Bild nicht vorhanden
+  const [data, setData] = useState(() => (id && bildCache.get(id)) || undefined);
+  useEffect(() => {
+    let aktiv = true;
+    if (!id) {
+      setData(null);
+      return;
+    }
+    setData(bildCache.get(id) || undefined);
+    window.bilder.laden(id).then((d) => {
+      if (aktiv) setData(d);
+    });
+    return () => {
+      aktiv = false;
+    };
+  }, [id]);
+  return data;
+}
+
+// Großansicht eines Bildes (über dem Pass), mit Löschen für Admins
+function BildAnsicht({ id, onClose, onDelete }) {
+  const data = useBild(id);
+  const [sicher, setSicher] = useState(false);
+  return (
+    <div
+      className="fixed inset-0 z-50 flex flex-col items-center justify-center p-4"
+      style={{ backgroundColor: "rgba(0,0,0,0.85)" }}
+      onClick={(e) => {
+        e.stopPropagation();
+        onClose();
+      }}
+    >
+      {data ? (
+        <img src={data} alt="" className="rounded-xl" style={{ maxWidth: "100%", maxHeight: "80vh", objectFit: "contain" }} />
+      ) : (
+        <p className="text-sm text-white">{data === null ? "Bild nicht gefunden" : "Bild wird geladen…"}</p>
+      )}
+      <div className="flex gap-2 mt-4" onClick={(e) => e.stopPropagation()}>
+        {onDelete && (
+          <button
+            type="button"
+            onClick={() => (sicher ? onDelete() : setSicher(true))}
+            className="px-4 py-2 rounded-lg text-sm font-semibold flex items-center gap-1.5"
+            style={{ backgroundColor: "#FFFFFF", color: "#BB201D" }}
+          >
+            <Trash2 size={16} /> {sicher ? "Wirklich löschen?" : "Löschen"}
+          </button>
+        )}
+        <button
+          type="button"
+          onClick={onClose}
+          className="px-4 py-2 rounded-lg text-sm font-semibold"
+          style={{ backgroundColor: "#FFFFFF", color: "#2B2A26" }}
+        >
+          Schließen
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function BildKachel({ id, onClick, size = 64 }) {
+  const data = useBild(id);
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className="shrink-0 rounded-lg overflow-hidden border bg-white flex items-center justify-center"
+      style={{ width: size, height: size, borderColor: PASS_BLUE }}
+      aria-label="Bild ansehen"
+    >
+      {data ? (
+        <img src={data} alt="" style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} />
+      ) : (
+        <span className="text-[10px] text-[#8A8672]">{data === null ? "fehlt" : "lädt…"}</span>
+      )}
+    </button>
+  );
+}
+
+// Unsichtbares Datei-Feld: öffnet auf dem Handy Kamera oder Galerie
+function BildWaehler({ multiple, onFiles, children, className, style, label }) {
+  const ref = useRef(null);
+  return (
+    <>
+      <button type="button" onClick={() => ref.current && ref.current.click()} className={className} style={style} aria-label={label}>
+        {children}
+      </button>
+      <input
+        ref={ref}
+        type="file"
+        accept="image/*"
+        multiple={!!multiple}
+        style={{ display: "none" }}
+        onChange={(e) => {
+          const files = [...(e.target.files || [])];
+          e.target.value = "";
+          if (files.length) onFiles(files);
+        }}
+      />
+    </>
+  );
+}
+
+// Fotos hochladen: Fehler melden, Bild-Nummern zurückgeben
+async function bilderHochladen(files, setBusy, setFehler) {
+  setBusy(true);
+  setFehler("");
+  const ids = [];
+  try {
+    for (const f of files) {
+      try {
+        ids.push(await window.bilder.speichern(f));
+      } catch (e) {
+        console.error(e);
+        setFehler("Bild konnte nicht gespeichert werden: " + ((e && e.message) || e));
+      }
+    }
+  } finally {
+    setBusy(false);
+  }
+  return ids;
+}
+
+// Bilderleiste unter Merkmalen/Auffälligkeiten
+function BilderLeiste({ animal, field, onUpdateField, isAdmin }) {
+  const ids = Array.isArray(animal[field]) ? animal[field] : [];
+  const [offen, setOffen] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [fehler, setFehler] = useState("");
+  if (!isAdmin && ids.length === 0) return null;
+  return (
+    <>
+    <div className="flex flex-wrap gap-2 mt-1.5">
+      {ids.map((id) => (
+        <BildKachel key={id} id={id} onClick={() => setOffen(id)} />
+      ))}
+      {isAdmin && (
+        <BildWaehler
+          multiple
+          label="Foto hinzufügen"
+          onFiles={async (files) => {
+            const neu = await bilderHochladen(files, setBusy, setFehler);
+            if (neu.length) onUpdateField(animal.id, { [field]: [...ids, ...neu] });
+          }}
+          className="shrink-0 rounded-lg border border-dashed bg-white flex flex-col items-center justify-center text-[#8A8672]"
+          style={{ width: 64, height: 64, borderColor: PASS_BLUE }}
+        >
+          {busy ? <span className="text-[10px]">speichert…</span> : (<><Plus size={18} /><span className="text-[10px]">Foto</span></>)}
+        </BildWaehler>
+      )}
+      {offen && (
+        <BildAnsicht
+          id={offen}
+          onClose={() => setOffen(null)}
+          onDelete={
+            isAdmin
+              ? () => {
+                  onUpdateField(animal.id, { [field]: ids.filter((x) => x !== offen) });
+                  window.bilder.loeschen(offen);
+                  setOffen(null);
+                }
+              : null
+          }
+        />
+      )}
+    </div>
+    {fehler && <p className="text-xs mt-1" style={{ color: "#BB201D" }}>{fehler}</p>}
+    </>
+  );
+}
+
+// Profilbild oben im Pass
+function ProfilBild({ animal, onUpdateField, isAdmin }) {
+  const data = useBild(animal.profilbild);
+  const [gross, setGross] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [fehler, setFehler] = useState("");
+  if (!animal.profilbild && !isAdmin) return null;
+  const fehlerText = fehler ? <p className="text-xs mt-1" style={{ color: "#BB201D" }}>{fehler}</p> : null;
+  const hochladen = async (files) => {
+    const [id] = await bilderHochladen(files.slice(0, 1), setBusy, setFehler);
+    if (!id) return;
+    const alt = animal.profilbild;
+    onUpdateField(animal.id, { profilbild: id });
+    if (alt) window.bilder.loeschen(alt);
+  };
+  if (!animal.profilbild) {
+    return (
+      <div className="mb-4">
+        <BildWaehler
+          label="Profilbild hinzufügen"
+          onFiles={hochladen}
+          className="w-full rounded-xl border border-dashed bg-white py-3 flex items-center justify-center gap-1.5 text-sm font-semibold text-[#8A8672]"
+          style={{ borderColor: PASS_BLUE }}
+        >
+          {busy ? "Bild wird gespeichert…" : (<><Plus size={16} /> Profilbild hinzufügen</>)}
+        </BildWaehler>
+        {fehlerText}
+      </div>
+    );
+  }
+  return (
+    <div className="mb-4">
+      <button
+        type="button"
+        onClick={() => setGross(true)}
+        className="block w-full rounded-xl overflow-hidden border bg-white"
+        style={{ borderColor: PASS_BLUE, height: 220 }}
+        aria-label="Profilbild vergrößern"
+      >
+        {data ? (
+          <img src={data} alt="Profilbild" style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} />
+        ) : (
+          <span className="text-sm text-[#8A8672]">{data === null ? "Bild nicht gefunden" : "Bild wird geladen…"}</span>
+        )}
+      </button>
+      {isAdmin && (
+        <div className="flex justify-end mt-1.5">
+          <BildWaehler
+            label="Profilbild ändern"
+            onFiles={hochladen}
+            className="text-xs font-semibold rounded-lg px-3 py-1.5"
+            style={{ backgroundColor: "#2B2A26", color: "#FFFFFF" }}
+          >
+            {busy ? "Bild wird gespeichert…" : "Profilbild ändern"}
+          </BildWaehler>
+        </div>
+      )}
+      {fehlerText}
+      {gross && (
+        <BildAnsicht
+          id={animal.profilbild}
+          onClose={() => setGross(false)}
+          onDelete={
+            isAdmin
+              ? () => {
+                  const alt = animal.profilbild;
+                  onUpdateField(animal.id, { profilbild: "" });
+                  window.bilder.loeschen(alt);
+                  setGross(false);
+                }
+              : null
+          }
+        />
+      )}
+    </div>
+  );
+}
+
 function AnimalPass({ animal, allAnimals, onEdit, onClose, onOpenAnimal, onShowAllDescendants, onUpdateField, onMove, onOpenBreedingHistory, onOpenStallbuch, onRequestAbgang }) {
   const isAdmin = useContext(AppModeContext) === "admin";
   const [moving, setMoving] = useState(false);
@@ -1498,6 +1859,10 @@ function AnimalPass({ animal, allAnimals, onEdit, onClose, onOpenAnimal, onShowA
               </span>
             </div>
 
+          <div className="mx-8">
+            <ProfilBild animal={animal} onUpdateField={onUpdateField} isAdmin={isAdmin} />
+          </div>
+
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mx-8 mb-4">
             <div>
               <h3 className="text-xs font-semibold uppercase tracking-wide mb-1" style={{ color: headingColor }}>
@@ -1535,7 +1900,7 @@ function AnimalPass({ animal, allAnimals, onEdit, onClose, onOpenAnimal, onShowA
                 )}
               </div>
               {editingField === "merkmale" ? (
-                <div className="mb-3">
+                <div>
                   <textarea
                     autoFocus
                     value={fieldDraft}
@@ -1565,12 +1930,15 @@ function AnimalPass({ animal, allAnimals, onEdit, onClose, onOpenAnimal, onShowA
                 </div>
               ) : (
                 <div
-                  className="rounded-xl border bg-white px-3 py-2 mb-3 text-sm text-[#2B2A26] whitespace-pre-wrap"
+                  className="rounded-xl border bg-white px-3 py-2 text-sm text-[#2B2A26] whitespace-pre-wrap"
                   style={{ borderColor: PASS_BLUE }}
                 >
                   {animal.merkmale || "–"}
                 </div>
               )}
+              <div className="mb-3">
+                <BilderLeiste animal={animal} field="merkmaleBilder" onUpdateField={onUpdateField} isAdmin={isAdmin} />
+              </div>
 
               <div className="flex items-center justify-between mb-1">
                 <h3 className="text-xs font-semibold uppercase tracking-wide" style={{ color: headingColor }}>
@@ -1624,6 +1992,7 @@ function AnimalPass({ animal, allAnimals, onEdit, onClose, onOpenAnimal, onShowA
                   {animal.auffaelligkeiten || "–"}
                 </div>
               )}
+              <BilderLeiste animal={animal} field="auffaelligkeitenBilder" onUpdateField={onUpdateField} isAdmin={isAdmin} />
             </div>
           </div>
 
