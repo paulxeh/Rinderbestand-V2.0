@@ -1879,10 +1879,13 @@ function BildKachel({ id, onClick, size = 64 }) {
   );
 }
 
-// Knopf, der eine Auswahl öffnet: Foto aufnehmen oder aus der Galerie nehmen
+// Knopf, der eine Auswahl öffnet: Foto aufnehmen oder aus der Galerie nehmen.
+// Die Galerie-Auswahl ist bewusst ohne "multiple": manche Android-Browser (z.B. Samsung Internet)
+// bieten die Galerie-App sonst nicht an, sondern nur die Dateien-App.
 function BildWaehler({ multiple, onFiles, children, className, style, label }) {
   const kameraRef = useRef(null);
   const galerieRef = useRef(null);
+  const mehrereRef = useRef(null);
   const [offen, setOffen] = useState(false);
   const nehmen = (e) => {
     const files = [...(e.target.files || [])];
@@ -1897,7 +1900,8 @@ function BildWaehler({ multiple, onFiles, children, className, style, label }) {
         {children}
       </button>
       <input ref={kameraRef} type="file" accept="image/*" capture="environment" data-quelle="kamera" style={{ display: "none" }} onChange={nehmen} />
-      <input ref={galerieRef} type="file" accept="image/*" multiple={!!multiple} data-quelle="galerie" style={{ display: "none" }} onChange={nehmen} />
+      <input ref={galerieRef} type="file" accept="image/*" data-quelle="galerie" style={{ display: "none" }} onChange={nehmen} />
+      {multiple && <input ref={mehrereRef} type="file" accept="image/*" multiple data-quelle="mehrere" style={{ display: "none" }} onChange={nehmen} />}
       {offen && (
         <div
           className="fixed inset-0 z-[60] flex items-end justify-center"
@@ -1918,6 +1922,11 @@ function BildWaehler({ multiple, onFiles, children, className, style, label }) {
             <button type="button" className={zeile} style={{ backgroundColor: "#2B2A26", color: "#FFFFFF" }} onClick={() => galerieRef.current && galerieRef.current.click()}>
               Aus Galerie wählen
             </button>
+            {multiple && (
+              <button type="button" className={zeile} style={{ backgroundColor: "#2B2A26", color: "#FFFFFF" }} onClick={() => mehrereRef.current && mehrereRef.current.click()}>
+                Mehrere Bilder auf einmal
+              </button>
+            )}
             <button type="button" className={zeile} style={{ backgroundColor: "#FFFFFF", color: "#2B2A26", border: "1px solid #D9CFB8" }} onClick={() => setOffen(false)}>
               Abbrechen
             </button>
