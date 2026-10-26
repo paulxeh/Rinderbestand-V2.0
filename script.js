@@ -231,42 +231,52 @@ function idbTx(mode, fn) {
   );
 }
 
-// Foto aus der Kamera/Galerie verkleinern und als JPEG-Text zurückgeben
-function bildVerkleinern(file) {
+// Bild (Datei, Blob-Adresse oder data-URL) in ein <img> laden
+function bildElementLaden(src) {
   return new Promise((resolve, reject) => {
-    const url = URL.createObjectURL(file);
     const img = new Image();
-    img.onload = () => {
-      URL.revokeObjectURL(url);
-      let kante = BILD_MAX_KANTE;
-      let qualitaet = 0.82;
-      for (let versuch = 0; versuch < 8; versuch++) {
-        const f = Math.min(1, kante / Math.max(img.naturalWidth, img.naturalHeight));
-        const c = document.createElement("canvas");
-        c.width = Math.max(1, Math.round(img.naturalWidth * f));
-        c.height = Math.max(1, Math.round(img.naturalHeight * f));
-        const ctx = c.getContext("2d");
-        ctx.fillStyle = "#FFFFFF";
-        ctx.fillRect(0, 0, c.width, c.height);
-        ctx.drawImage(img, 0, 0, c.width, c.height);
-        const data = c.toDataURL("image/jpeg", qualitaet);
-        if (data.length <= BILD_MAX_ZEICHEN) return resolve(data);
-        if (qualitaet > 0.6) qualitaet -= 0.1;
-        else kante = Math.round(kante * 0.8);
-      }
-      reject(new Error("Bild ist zu groß"));
-    };
-    img.onerror = () => {
-      URL.revokeObjectURL(url);
-      reject(new Error("Datei ist kein lesbares Bild"));
-    };
-    img.src = url;
+    img.onload = () => resolve(img);
+    img.onerror = () => reject(new Error("Datei ist kein lesbares Bild"));
+    img.src = src;
   });
 }
 
+// Leinwand (Canvas) als JPEG-Text, höchstens BILD_MAX_KANTE Pixel und < BILD_MAX_ZEICHEN
+function bildAusQuelle(quelle, breite, hoehe) {
+  let kante = BILD_MAX_KANTE;
+  let qualitaet = 0.82;
+  for (let versuch = 0; versuch < 8; versuch++) {
+    const f = Math.min(1, kante / Math.max(breite, hoehe));
+    const c = document.createElement("canvas");
+    c.width = Math.max(1, Math.round(breite * f));
+    c.height = Math.max(1, Math.round(hoehe * f));
+    const ctx = c.getContext("2d");
+    ctx.fillStyle = "#FFFFFF";
+    ctx.fillRect(0, 0, c.width, c.height);
+    ctx.drawImage(quelle, 0, 0, c.width, c.height);
+    const data = c.toDataURL("image/jpeg", qualitaet);
+    if (data.length <= BILD_MAX_ZEICHEN) return data;
+    if (qualitaet > 0.6) qualitaet -= 0.1;
+    else kante = Math.round(kante * 0.8);
+  }
+  throw new Error("Bild ist zu groß");
+}
+
+// Foto aus der Kamera/Galerie verkleinern und als JPEG-Text zurückgeben
+async function bildVerkleinern(file) {
+  const url = URL.createObjectURL(file);
+  try {
+    const img = await bildElementLaden(url);
+    return bildAusQuelle(img, img.naturalWidth, img.naturalHeight);
+  } finally {
+    URL.revokeObjectURL(url);
+  }
+}
+
 window.bilder = {
-  async speichern(file) {
-    const data = await bildVerkleinern(file);
+  // nimmt eine Datei oder einen fertigen JPEG-Text (aus dem Bild-Bearbeiten)
+  async speichern(fileOderDaten) {
+    const data = typeof fileOderDaten === "string" ? fileOderDaten : await bildVerkleinern(fileOderDaten);
     const id = "b_" + Date.now().toString(36) + "_" + Math.random().toString(36).slice(2, 8);
     if (cloud.user) {
       await cloud.db
@@ -1554,10 +1564,254 @@ function useBild(id) {
   return data;
 }
 
-// Großansicht eines Bildes (über dem Pass), mit Löschen für Admins
-function BildAnsicht({ id, onClose, onDelete }) {
+// Bild bearbeiten: drehen, zuschneiden, Helligkeit
+function BildEditor({ src, onCancel, onSave }) {
+  const [img, setImg] = useState(null);
+  const [fehler, setFehler] = useState("");
+  const [drehung, setDrehung] = useState(0); // 0, 90, 180, 270
+  const [spiegeln, setSpiegeln] = useState(false);
+  const [rahmen, setRahmen] = useState({ x: 0, y: 0, w: 1, h: 1 }); // Anteil am gedrehten Bild
+  const [hell, setHell] = useState(100);
+  const [busy, setBusy] = useState(false);
+  const canvasRef = useRef(null);
+  const zugRef = useRef(null);
+  const [platz, setPlatz] = useState(() => ({ w: Math.min(window.innerWidth - 32, 900), h: Math.round(window.innerHeight * 0.58) }));
+
+  useEffect(() => {
+    let aktiv = true;
+    bildElementLaden(src)
+      .then((i) => aktiv && setImg(i))
+      .catch((e) => aktiv && setFehler(e.message));
+    const onResize = () => setPlatz({ w: Math.min(window.innerWidth - 32, 900), h: Math.round(window.innerHeight * 0.58) });
+    window.addEventListener("resize", onResize);
+    return () => {
+      aktiv = false;
+      window.removeEventListener("resize", onResize);
+    };
+  }, [src]);
+
+  const quer = drehung % 180 !== 0;
+  const bw = img ? (quer ? img.naturalHeight : img.naturalWidth) : 1;
+  const bh = img ? (quer ? img.naturalWidth : img.naturalHeight) : 1;
+  const skala = Math.min(platz.w / bw, platz.h / bh);
+  const dw = Math.max(1, Math.round(bw * skala));
+  const dh = Math.max(1, Math.round(bh * skala));
+
+  // gedrehtes Bild in eine Leinwand zeichnen (Vorschau oder volle Größe)
+  const zeichneGedreht = (ziel, f) => {
+    const ctx = ziel.getContext("2d");
+    ctx.save();
+    ctx.translate(ziel.width / 2, ziel.height / 2);
+    ctx.rotate((drehung * Math.PI) / 180);
+    if (spiegeln) ctx.scale(-1, 1);
+    const w = img.naturalWidth * f;
+    const h = img.naturalHeight * f;
+    ctx.drawImage(img, -w / 2, -h / 2, w, h);
+    ctx.restore();
+  };
+
+  useEffect(() => {
+    if (!img || !canvasRef.current) return;
+    const c = canvasRef.current;
+    const r = window.devicePixelRatio || 1;
+    c.width = Math.round(dw * r);
+    c.height = Math.round(dh * r);
+    zeichneGedreht(c, skala * r);
+  }, [img, drehung, spiegeln, dw, dh]);
+
+  const drehen = (grad) => {
+    setDrehung((d) => (d + grad + 360) % 360);
+    setRahmen({ x: 0, y: 0, w: 1, h: 1 });
+  };
+
+  const MIN = 0.08;
+  const startZiehen = (art) => (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    zugRef.current = { art, sx: e.clientX, sy: e.clientY, r: { ...rahmen } };
+    try {
+      e.currentTarget.setPointerCapture(e.pointerId);
+    } catch (err) {}
+  };
+  const ziehen = (e) => {
+    const z = zugRef.current;
+    if (!z) return;
+    const dx = (e.clientX - z.sx) / dw;
+    const dy = (e.clientY - z.sy) / dh;
+    let { x, y, w, h } = z.r;
+    if (z.art === "mitte") {
+      x = Math.min(Math.max(0, x + dx), 1 - w);
+      y = Math.min(Math.max(0, y + dy), 1 - h);
+    } else {
+      let x2 = x + w;
+      let y2 = y + h;
+      if (z.art.includes("l")) x = Math.min(Math.max(0, x + dx), x2 - MIN);
+      if (z.art.includes("r")) x2 = Math.max(Math.min(1, x2 + dx), x + MIN);
+      if (z.art.includes("o")) y = Math.min(Math.max(0, y + dy), y2 - MIN);
+      if (z.art.includes("u")) y2 = Math.max(Math.min(1, y2 + dy), y + MIN);
+      w = x2 - x;
+      h = y2 - y;
+    }
+    setRahmen({ x, y, w, h });
+  };
+  const loslassen = () => {
+    zugRef.current = null;
+  };
+
+  const speichern = async () => {
+    if (!img) return;
+    setBusy(true);
+    setFehler("");
+    try {
+      // erst in voller Größe (max. 2560 px) drehen, dann zuschneiden, dann verkleinern
+      const f = Math.min(1, 2560 / Math.max(img.naturalWidth, img.naturalHeight));
+      const voll = document.createElement("canvas");
+      voll.width = Math.max(1, Math.round(bw * f));
+      voll.height = Math.max(1, Math.round(bh * f));
+      zeichneGedreht(voll, f);
+      const cx = Math.round(rahmen.x * voll.width);
+      const cy = Math.round(rahmen.y * voll.height);
+      const cw = Math.max(1, Math.round(rahmen.w * voll.width));
+      const ch = Math.max(1, Math.round(rahmen.h * voll.height));
+      const fz = Math.min(1, BILD_MAX_KANTE / Math.max(cw, ch));
+      const aus = document.createElement("canvas");
+      aus.width = Math.max(1, Math.round(cw * fz));
+      aus.height = Math.max(1, Math.round(ch * fz));
+      const ctx = aus.getContext("2d");
+      ctx.fillStyle = "#FFFFFF";
+      ctx.fillRect(0, 0, aus.width, aus.height);
+      ctx.drawImage(voll, cx, cy, cw, ch, 0, 0, aus.width, aus.height);
+      if (hell !== 100) {
+        const k = hell / 100;
+        const px = ctx.getImageData(0, 0, aus.width, aus.height);
+        const d = px.data;
+        for (let i = 0; i < d.length; i += 4) {
+          d[i] = Math.min(255, d[i] * k);
+          d[i + 1] = Math.min(255, d[i + 1] * k);
+          d[i + 2] = Math.min(255, d[i + 2] * k);
+        }
+        ctx.putImageData(px, 0, 0);
+      }
+      const data = bildAusQuelle(aus, aus.width, aus.height);
+      await onSave(data);
+    } catch (e) {
+      console.error(e);
+      setFehler("Bild konnte nicht gespeichert werden: " + ((e && e.message) || e));
+      setBusy(false);
+    }
+  };
+
+  const knopf = "px-3 py-2 rounded-lg text-sm font-semibold";
+  const hellKnopf = { backgroundColor: "#FFFFFF", color: "#2B2A26" };
+  const ecke = (art, stil) => (
+    <div
+      onPointerDown={startZiehen(art)}
+      onPointerMove={ziehen}
+      onPointerUp={loslassen}
+      onPointerCancel={loslassen}
+      style={{ position: "absolute", width: 28, height: 28, touchAction: "none", ...stil }}
+    >
+      <div style={{ position: "absolute", left: 7, top: 7, width: 14, height: 14, backgroundColor: "#FFFFFF", border: "2px solid #2B2A26", borderRadius: 3 }} />
+    </div>
+  );
+
+  return (
+    <div
+      className="fixed inset-0 z-[60] flex flex-col items-center overflow-y-auto"
+      style={{ backgroundColor: "rgba(0,0,0,0.92)", paddingTop: "calc(env(safe-area-inset-top, 0px) + 12px)", paddingBottom: 16 }}
+      onClick={(e) => e.stopPropagation()}
+    >
+      <p className="text-white font-slab font-bold text-lg mb-1">Bild bearbeiten</p>
+      <p className="text-xs mb-3" style={{ color: "#D9CFB8" }}>Zum Zuschneiden die weißen Ecken ziehen, zum Verschieben den Rahmen ziehen.</p>
+      {!img ? (
+        <p className="text-sm text-white my-10">{fehler || "Bild wird geladen…"}</p>
+      ) : (
+        <div style={{ position: "relative", width: dw, height: dh, touchAction: "none", userSelect: "none" }}>
+          <canvas ref={canvasRef} style={{ width: dw, height: dh, display: "block", filter: `brightness(${hell}%)` }} />
+          <div
+            onPointerDown={startZiehen("mitte")}
+            onPointerMove={ziehen}
+            onPointerUp={loslassen}
+            onPointerCancel={loslassen}
+            style={{
+              position: "absolute",
+              left: rahmen.x * dw,
+              top: rahmen.y * dh,
+              width: rahmen.w * dw,
+              height: rahmen.h * dh,
+              border: "2px solid #FFFFFF",
+              boxShadow: "0 0 0 9999px rgba(0,0,0,0.55)",
+              touchAction: "none",
+              cursor: "move",
+            }}
+          >
+            {ecke("lo", { left: -15, top: -15, cursor: "nwse-resize" })}
+            {ecke("ro", { right: -15, top: -15, cursor: "nesw-resize" })}
+            {ecke("lu", { left: -15, bottom: -15, cursor: "nesw-resize" })}
+            {ecke("ru", { right: -15, bottom: -15, cursor: "nwse-resize" })}
+          </div>
+        </div>
+      )}
+      {img && (
+        <div className="w-full px-4 mt-4 flex flex-col items-center gap-3" style={{ maxWidth: 520 }}>
+          <div className="flex flex-wrap justify-center gap-2">
+            <button type="button" className={knopf} style={hellKnopf} onClick={() => drehen(-90)}>⟲ Links drehen</button>
+            <button type="button" className={knopf} style={hellKnopf} onClick={() => drehen(90)}>⟳ Rechts drehen</button>
+            <button type="button" className={knopf} style={hellKnopf} onClick={() => setSpiegeln((v) => !v)}>⇋ Spiegeln</button>
+            <button
+              type="button"
+              className={knopf}
+              style={hellKnopf}
+              onClick={() => {
+                setDrehung(0);
+                setSpiegeln(false);
+                setHell(100);
+                setRahmen({ x: 0, y: 0, w: 1, h: 1 });
+              }}
+            >
+              Zurücksetzen
+            </button>
+          </div>
+          <label className="w-full flex items-center gap-3 text-sm text-white">
+            <span className="shrink-0">Helligkeit</span>
+            <input type="range" min="50" max="160" value={hell} onChange={(e) => setHell(Number(e.target.value))} className="flex-1" />
+            <span className="shrink-0 w-12 text-right" style={{ fontVariantNumeric: "tabular-nums" }}>{hell}%</span>
+          </label>
+          {fehler && <p className="text-xs" style={{ color: "#FFB4A8" }}>{fehler}</p>}
+          <div className="w-full flex gap-2">
+            <button type="button" onClick={onCancel} disabled={busy} className="flex-1 py-2.5 rounded-lg text-sm font-semibold" style={hellKnopf}>
+              Abbrechen
+            </button>
+            <button type="button" onClick={speichern} disabled={busy} className="flex-1 py-2.5 rounded-lg text-sm font-semibold" style={hellKnopf}>
+              {busy ? "Speichert…" : "Speichern"}
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Großansicht eines Bildes (über dem Pass), mit Bearbeiten und Löschen für Admins
+function BildAnsicht({ id, onClose, onDelete, onReplace, direktBearbeiten }) {
   const data = useBild(id);
   const [sicher, setSicher] = useState(false);
+  const [bearbeiten, setBearbeiten] = useState(!!direktBearbeiten);
+  if (bearbeiten && data) {
+    return (
+      <BildEditor
+        src={data}
+        onCancel={() => (direktBearbeiten ? onClose() : setBearbeiten(false))}
+        onSave={async (neu) => {
+          const neueId = await window.bilder.speichern(neu);
+          onReplace(neueId);
+          window.bilder.loeschen(id);
+          if (direktBearbeiten) onClose();
+          else setBearbeiten(false);
+        }}
+      />
+    );
+  }
   return (
     <div
       className="fixed inset-0 z-50 flex flex-col items-center justify-center p-4"
@@ -1572,7 +1826,17 @@ function BildAnsicht({ id, onClose, onDelete }) {
       ) : (
         <p className="text-sm text-white">{data === null ? "Bild nicht gefunden" : "Bild wird geladen…"}</p>
       )}
-      <div className="flex gap-2 mt-4" onClick={(e) => e.stopPropagation()}>
+      <div className="flex flex-wrap justify-center gap-2 mt-4" onClick={(e) => e.stopPropagation()}>
+        {onReplace && data && (
+          <button
+            type="button"
+            onClick={() => setBearbeiten(true)}
+            className="px-4 py-2 rounded-lg text-sm font-semibold flex items-center gap-1.5"
+            style={{ backgroundColor: "#FFFFFF", color: "#2B2A26" }}
+          >
+            <Pencil size={15} /> Bearbeiten
+          </button>
+        )}
         {onDelete && (
           <button
             type="button"
@@ -1615,26 +1879,51 @@ function BildKachel({ id, onClick, size = 64 }) {
   );
 }
 
-// Unsichtbares Datei-Feld: öffnet auf dem Handy Kamera oder Galerie
+// Knopf, der eine Auswahl öffnet: Foto aufnehmen oder aus der Galerie nehmen
 function BildWaehler({ multiple, onFiles, children, className, style, label }) {
-  const ref = useRef(null);
+  const kameraRef = useRef(null);
+  const galerieRef = useRef(null);
+  const [offen, setOffen] = useState(false);
+  const nehmen = (e) => {
+    const files = [...(e.target.files || [])];
+    e.target.value = "";
+    setOffen(false);
+    if (files.length) onFiles(files);
+  };
+  const zeile = "w-full py-3 rounded-xl text-base font-semibold";
   return (
     <>
-      <button type="button" onClick={() => ref.current && ref.current.click()} className={className} style={style} aria-label={label}>
+      <button type="button" onClick={() => setOffen(true)} className={className} style={style} aria-label={label}>
         {children}
       </button>
-      <input
-        ref={ref}
-        type="file"
-        accept="image/*"
-        multiple={!!multiple}
-        style={{ display: "none" }}
-        onChange={(e) => {
-          const files = [...(e.target.files || [])];
-          e.target.value = "";
-          if (files.length) onFiles(files);
-        }}
-      />
+      <input ref={kameraRef} type="file" accept="image/*" capture="environment" data-quelle="kamera" style={{ display: "none" }} onChange={nehmen} />
+      <input ref={galerieRef} type="file" accept="image/*" multiple={!!multiple} data-quelle="galerie" style={{ display: "none" }} onChange={nehmen} />
+      {offen && (
+        <div
+          className="fixed inset-0 z-[60] flex items-end justify-center"
+          style={{ backgroundColor: "rgba(0,0,0,0.4)" }}
+          onClick={(e) => {
+            e.stopPropagation();
+            setOffen(false);
+          }}
+        >
+          <div
+            className="w-full sm:max-w-sm bg-white rounded-t-2xl sm:rounded-2xl p-4 flex flex-col gap-2"
+            style={{ paddingBottom: "calc(env(safe-area-inset-bottom, 0px) + 16px)" }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <button type="button" className={zeile} style={{ backgroundColor: "#2B2A26", color: "#FFFFFF" }} onClick={() => kameraRef.current && kameraRef.current.click()}>
+              Foto aufnehmen
+            </button>
+            <button type="button" className={zeile} style={{ backgroundColor: "#2B2A26", color: "#FFFFFF" }} onClick={() => galerieRef.current && galerieRef.current.click()}>
+              Aus Galerie wählen
+            </button>
+            <button type="button" className={zeile} style={{ backgroundColor: "#FFFFFF", color: "#2B2A26", border: "1px solid #D9CFB8" }} onClick={() => setOffen(false)}>
+              Abbrechen
+            </button>
+          </div>
+        </div>
+      )}
     </>
   );
 }
@@ -1659,12 +1948,39 @@ async function bilderHochladen(files, setBusy, setFehler) {
   return ids;
 }
 
+// Ein einzelnes neues Foto erst im Bearbeiten-Fenster zeigen, mehrere direkt speichern
+function useNeuesFoto(beiFertig, setBusy, setFehler) {
+  const [editorSrc, setEditorSrc] = useState(null);
+  useEffect(() => () => editorSrc && URL.revokeObjectURL(editorSrc), [editorSrc]);
+  const dateienGewaehlt = async (files) => {
+    if (files.length === 1) {
+      setEditorSrc(URL.createObjectURL(files[0]));
+      return;
+    }
+    const ids = await bilderHochladen(files, setBusy, setFehler);
+    if (ids.length) beiFertig(ids);
+  };
+  const editor = editorSrc ? (
+    <BildEditor
+      src={editorSrc}
+      onCancel={() => setEditorSrc(null)}
+      onSave={async (data) => {
+        const id = await window.bilder.speichern(data);
+        setEditorSrc(null);
+        beiFertig([id]);
+      }}
+    />
+  ) : null;
+  return { dateienGewaehlt, editor };
+}
+
 // Bilderleiste unter Merkmalen/Auffälligkeiten
 function BilderLeiste({ animal, field, onUpdateField, isAdmin }) {
   const ids = Array.isArray(animal[field]) ? animal[field] : [];
   const [offen, setOffen] = useState(null);
   const [busy, setBusy] = useState(false);
   const [fehler, setFehler] = useState("");
+  const { dateienGewaehlt, editor } = useNeuesFoto((neu) => onUpdateField(animal.id, { [field]: [...ids, ...neu] }), setBusy, setFehler);
   if (!isAdmin && ids.length === 0) return null;
   return (
     <>
@@ -1676,10 +1992,7 @@ function BilderLeiste({ animal, field, onUpdateField, isAdmin }) {
         <BildWaehler
           multiple
           label="Foto hinzufügen"
-          onFiles={async (files) => {
-            const neu = await bilderHochladen(files, setBusy, setFehler);
-            if (neu.length) onUpdateField(animal.id, { [field]: [...ids, ...neu] });
-          }}
+          onFiles={dateienGewaehlt}
           className="shrink-0 rounded-lg border border-dashed bg-white flex flex-col items-center justify-center text-[#8A8672]"
           style={{ width: 64, height: 64, borderColor: PASS_BLUE }}
         >
@@ -1690,6 +2003,14 @@ function BilderLeiste({ animal, field, onUpdateField, isAdmin }) {
         <BildAnsicht
           id={offen}
           onClose={() => setOffen(null)}
+          onReplace={
+            isAdmin
+              ? (neueId) => {
+                  onUpdateField(animal.id, { [field]: ids.map((x) => (x === offen ? neueId : x)) });
+                  setOffen(neueId);
+                }
+              : null
+          }
           onDelete={
             isAdmin
               ? () => {
@@ -1701,6 +2022,7 @@ function BilderLeiste({ animal, field, onUpdateField, isAdmin }) {
           }
         />
       )}
+      {editor}
     </div>
     {fehler && <p className="text-xs mt-1" style={{ color: "#BB201D" }}>{fehler}</p>}
     </>
@@ -1710,30 +2032,30 @@ function BilderLeiste({ animal, field, onUpdateField, isAdmin }) {
 // Profilbild oben im Pass
 function ProfilBild({ animal, onUpdateField, isAdmin }) {
   const data = useBild(animal.profilbild);
-  const [gross, setGross] = useState(false);
+  const [gross, setGross] = useState(false); // false | "ansehen" | "bearbeiten"
   const [busy, setBusy] = useState(false);
   const [fehler, setFehler] = useState("");
-  if (!animal.profilbild && !isAdmin) return null;
-  const fehlerText = fehler ? <p className="text-xs mt-1" style={{ color: "#BB201D" }}>{fehler}</p> : null;
-  const hochladen = async (files) => {
-    const [id] = await bilderHochladen(files.slice(0, 1), setBusy, setFehler);
-    if (!id) return;
+  const setzen = (id) => {
     const alt = animal.profilbild;
     onUpdateField(animal.id, { profilbild: id });
-    if (alt) window.bilder.loeschen(alt);
+    if (alt && alt !== id) window.bilder.loeschen(alt);
   };
+  const { dateienGewaehlt, editor } = useNeuesFoto((ids) => ids[0] && setzen(ids[0]), setBusy, setFehler);
+  if (!animal.profilbild && !isAdmin) return null;
+  const fehlerText = fehler ? <p className="text-xs mt-1" style={{ color: "#BB201D" }}>{fehler}</p> : null;
   if (!animal.profilbild) {
     return (
       <div className="mb-4">
         <BildWaehler
           label="Profilbild hinzufügen"
-          onFiles={hochladen}
+          onFiles={(files) => dateienGewaehlt(files.slice(0, 1))}
           className="w-full rounded-xl border border-dashed bg-white py-3 flex items-center justify-center gap-1.5 text-sm font-semibold text-[#8A8672]"
           style={{ borderColor: PASS_BLUE }}
         >
           {busy ? "Bild wird gespeichert…" : (<><Plus size={16} /> Profilbild hinzufügen</>)}
         </BildWaehler>
         {fehlerText}
+        {editor}
       </div>
     );
   }
@@ -1741,7 +2063,7 @@ function ProfilBild({ animal, onUpdateField, isAdmin }) {
     <div className="mb-4">
       <button
         type="button"
-        onClick={() => setGross(true)}
+        onClick={() => setGross("ansehen")}
         className="block w-full rounded-xl overflow-hidden border bg-white"
         style={{ borderColor: PASS_BLUE, height: 220 }}
         aria-label="Profilbild vergrößern"
@@ -1753,10 +2075,20 @@ function ProfilBild({ animal, onUpdateField, isAdmin }) {
         )}
       </button>
       {isAdmin && (
-        <div className="flex justify-end mt-1.5">
+        <div className="flex justify-end gap-2 mt-1.5">
+          {data && (
+            <button
+              type="button"
+              onClick={() => setGross("bearbeiten")}
+              className="text-xs font-semibold rounded-lg px-3 py-1.5"
+              style={{ backgroundColor: "#2B2A26", color: "#FFFFFF" }}
+            >
+              Bearbeiten
+            </button>
+          )}
           <BildWaehler
             label="Profilbild ändern"
-            onFiles={hochladen}
+            onFiles={(files) => dateienGewaehlt(files.slice(0, 1))}
             className="text-xs font-semibold rounded-lg px-3 py-1.5"
             style={{ backgroundColor: "#2B2A26", color: "#FFFFFF" }}
           >
@@ -1765,10 +2097,13 @@ function ProfilBild({ animal, onUpdateField, isAdmin }) {
         </div>
       )}
       {fehlerText}
+      {editor}
       {gross && (
         <BildAnsicht
           id={animal.profilbild}
+          direktBearbeiten={gross === "bearbeiten"}
           onClose={() => setGross(false)}
+          onReplace={isAdmin ? (neueId) => setzen(neueId) : null}
           onDelete={
             isAdmin
               ? () => {
