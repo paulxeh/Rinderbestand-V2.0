@@ -3233,8 +3233,7 @@ function StammbaumView({ animals, onBack, onOpenAnimal }) {
   );
 }
 
-// Abschnitte der Historie. Weibliche Tiere: Brunsthistorie (mit Stallbuchblatt),
-// männliche Tiere: Stallbuch (Stallbuchblatt mit Nachzucht als Vater).
+// Abschnitte der Historie. Brunsthistorie und Deckbullen nur bei weiblichen Tieren.
 const HISTORIE_TABS = [
   ["brunsthistorie", "Brunsthistorie"],
   ["stallbuch", "Stallbuch"],
@@ -3245,9 +3244,7 @@ const HISTORIE_TABS = [
 
 function historieTabsFuer(animal) {
   const isFemale = animal && animal.gender === "weiblich";
-  return HISTORIE_TABS.filter(([key]) =>
-    isFemale ? key !== "stallbuch" : key !== "brunsthistorie" && key !== "deckbullen"
-  );
+  return HISTORIE_TABS.filter(([key]) => isFemale || (key !== "brunsthistorie" && key !== "deckbullen"));
 }
 
 // Startabschnitt der Historie: Brunsthistorie bzw. Stallbuch (je nach Geschlecht)
@@ -3259,11 +3256,7 @@ function HistorieView({ animal, allAnimals, onBack, onOpenAnimal, initialTab, on
   const current = allAnimals.find((a) => a.id === animal.id) || animal;
   const isFemale = current.gender === "weiblich";
   const visibleTabs = historieTabsFuer(current);
-  const passenderTab = (t) => {
-    if (t === "stallbuch" && isFemale) return "brunsthistorie";
-    if (t === "brunsthistorie" && !isFemale) return "stallbuch";
-    return t;
-  };
+  const passenderTab = (t) => (t === "brunsthistorie" && !isFemale ? "stallbuch" : t);
   const [tab, setTab] = useState(() => {
     const t = passenderTab(initialTab);
     return t && visibleTabs.some(([key]) => key === t) ? t : visibleTabs[0][0];
@@ -3338,13 +3331,15 @@ function HistorieView({ animal, allAnimals, onBack, onOpenAnimal, initialTab, on
           {current.name ? ` – ${current.name}` : ""}
         </h1>
 
-        <div className={`grid gap-2 mt-4 ${visibleTabs.length >= 4 ? "grid-cols-4" : "grid-cols-3"}`}>
+        <div className="grid grid-cols-3 gap-2 mt-4">
           {visibleTabs.map(([key, label]) => {
             const anzahl =
               key === "brunsthistorie"
                 ? breedingEvents.length
                 : key === "stallbuch"
-                ? allAnimals.filter((a) => current.earTag && sameEarTag(a.fatherEarTag, current.earTag)).length
+                ? isFemale
+                  ? buildCalvings(current, allAnimals).length
+                  : allAnimals.filter((a) => current.earTag && sameEarTag(a.fatherEarTag, current.earTag)).length
                 : key === "nachkommen"
                 ? descendants.length
                 : key === "stallbewegung"
@@ -3396,34 +3391,38 @@ function HistorieView({ animal, allAnimals, onBack, onOpenAnimal, initialTab, on
       </header>
 
       <div className="px-5 py-4 pb-10">
-        {(tab === "brunsthistorie" || tab === "stallbuch") && (
-          <StallbuchInhalt animal={current} allAnimals={allAnimals} onOpenAnimal={onOpenAnimal} onUpdateField={onUpdateField}>
-            {tab === "brunsthistorie" && (
-              <SbBox title={`Brunst- und Besamungsereignisse (${breedingEvents.length})`}>
-                {breedingEvents.length === 0 ? (
-                  <p className="px-3 py-3 text-sm text-[#8A8672] italic">Noch keine Ereignisse erfasst.</p>
-                ) : (
-                  <div>
-                    {breedingEvents.map((ev, i) => {
-                      const info = BREEDING_HISTORY_LABELS[ev.type] || { label: ev.type, color: "#6B6858" };
-                      return (
-                        <div key={i} className="flex items-center justify-between gap-2 px-3 py-2 border-b border-[#F9EFE4]">
-                          <span className="text-sm" style={{ color: info.color }}>
-                            {info.label}
-                            {ev.bull ? ` · Bulle ${formatEarTag(ev.bull)}` : ""}
-                          </span>
-                          <span className="text-xs shrink-0" style={{ color: "#8A8672" }}>
-                            {formatDate(ev.date)}
-                          </span>
-                        </div>
-                      );
-                    })}
-                  </div>
-                )}
-                <p className="px-3 py-2 text-[11px] text-[#6B6858] border-t border-[#D9CFB8]">Neueste zuerst.</p>
-              </SbBox>
+        {tab === "stallbuch" && (
+          <StallbuchInhalt animal={current} allAnimals={allAnimals} onOpenAnimal={onOpenAnimal} onUpdateField={onUpdateField} />
+        )}
+
+        {tab === "brunsthistorie" && (
+          <>
+            <p className="text-xs mb-3" style={{ color: "#8A8672" }}>
+              Alle erfassten Brunst-/Besamungs-Ereignisse dieses Tieres, neueste zuerst.
+            </p>
+            {breedingEvents.length === 0 ? (
+              <p className="text-sm text-center py-6" style={{ color: "#B0A98F" }}>
+                Noch keine Ereignisse erfasst.
+              </p>
+            ) : (
+              <div className="flex flex-col gap-2">
+                {breedingEvents.map((ev, i) => {
+                  const info = BREEDING_HISTORY_LABELS[ev.type] || { label: ev.type, color: "#6B6858" };
+                  return (
+                    <div key={i} className="flex items-center justify-between gap-2 rounded-xl border p-3" style={{ borderColor: "#D9CFB8", backgroundColor: "#FFFFFF" }}>
+                      <span className="text-sm" style={{ color: info.color }}>
+                        {info.label}
+                        {ev.bull ? ` · Bulle ${formatEarTag(ev.bull)}` : ""}
+                      </span>
+                      <span className="text-xs shrink-0" style={{ color: "#8A8672" }}>
+                        {formatDate(ev.date)}
+                      </span>
+                    </div>
+                  );
+                })}
+              </div>
             )}
-          </StallbuchInhalt>
+          </>
         )}
 
         {tab === "nachkommen" && (
@@ -3834,7 +3833,7 @@ function SbTable({ head, rows, minWidth = 520 }) {
   );
 }
 
-// Stallbuchblatt-Inhalt (nach Vorbild LKV); wird in der Historie unter "Brunsthistorie" bzw. "Stallbuch" gezeigt
+// Stallbuchblatt-Inhalt (nach Vorbild LKV); wird in der Historie im Abschnitt "Stallbuch" gezeigt
 function StallbuchInhalt({ animal, allAnimals = [], onOpenAnimal, onUpdateField, children }) {
   const isAdmin = useContext(AppModeContext) === "admin";
   const cowStatsSb = useContext(CowStatsContext);
@@ -8233,9 +8232,9 @@ function RinderbestandApp() {
         return;
       }
       if (p2 === "stallbuch") {
-        // Stallbuch ist jetzt Teil der Historie (alte Lesezeichen funktionieren weiter)
+        // Stallbuch ist jetzt ein Abschnitt der Historie (alte Lesezeichen funktionieren weiter)
         setHistorieAnimal(a);
-        setHistorieTab(historieStartTab(a));
+        setHistorieTab("stallbuch");
         setHistorieReturnTo(a);
         return;
       }
