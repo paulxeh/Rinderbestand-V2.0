@@ -2598,17 +2598,6 @@ function AnimalPass({ animal, allAnimals, onEdit, onClose, onOpenAnimal, onShowA
                 >
                   Historie
                 </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setMoreMenuOpen(false);
-                    onOpenStallbuch(animal);
-                  }}
-                  className="w-full text-left px-4 py-2.5 text-sm hover:bg-[#F9EFE4] transition border-t"
-                  style={{ color: "#2B2A26", borderColor: "#F2EBDD" }}
-                >
-                  Stallbuch
-                </button>
                 {animal.category === "Abgänge" && (
                   <button
                     type="button"
@@ -3244,20 +3233,41 @@ function StammbaumView({ animals, onBack, onOpenAnimal }) {
   );
 }
 
+// Abschnitte der Historie. Weibliche Tiere: Brunsthistorie (mit Stallbuchblatt),
+// männliche Tiere: Stallbuch (Stallbuchblatt mit Nachzucht als Vater).
 const HISTORIE_TABS = [
   ["brunsthistorie", "Brunsthistorie"],
+  ["stallbuch", "Stallbuch"],
   ["nachkommen", "Nachkommen"],
-  ["stallbewegung", "Stall Bewegung"],
+  ["stallbewegung", "Stallbewegung"],
   ["deckbullen", "Deckbullen"],
 ];
 
-function HistorieView({ animal, allAnimals, onBack, onOpenAnimal, initialTab, onTabChange }) {
+function historieTabsFuer(animal) {
+  const isFemale = animal && animal.gender === "weiblich";
+  return HISTORIE_TABS.filter(([key]) =>
+    isFemale ? key !== "stallbuch" : key !== "brunsthistorie" && key !== "deckbullen"
+  );
+}
+
+// Startabschnitt der Historie: Brunsthistorie bzw. Stallbuch (je nach Geschlecht)
+function historieStartTab(animal) {
+  return animal && animal.gender === "weiblich" ? "brunsthistorie" : "stallbuch";
+}
+
+function HistorieView({ animal, allAnimals, onBack, onOpenAnimal, initialTab, onTabChange, onUpdateField, onTierWechseln }) {
   const current = allAnimals.find((a) => a.id === animal.id) || animal;
   const isFemale = current.gender === "weiblich";
-  const visibleTabs = HISTORIE_TABS.filter(([key]) => isFemale || (key !== "brunsthistorie" && key !== "deckbullen"));
-  const [tab, setTab] = useState(
-    initialTab && visibleTabs.some(([key]) => key === initialTab) ? initialTab : visibleTabs[0][0]
-  );
+  const visibleTabs = historieTabsFuer(current);
+  const passenderTab = (t) => {
+    if (t === "stallbuch" && isFemale) return "brunsthistorie";
+    if (t === "brunsthistorie" && !isFemale) return "stallbuch";
+    return t;
+  };
+  const [tab, setTab] = useState(() => {
+    const t = passenderTab(initialTab);
+    return t && visibleTabs.some(([key]) => key === t) ? t : visibleTabs[0][0];
+  });
   // Aktuellen Reiter nach oben melden, damit die Adresse (URL) ihn mitführt
   useEffect(() => {
     if (onTabChange) onTabChange(tab);
@@ -3321,74 +3331,99 @@ function HistorieView({ animal, allAnimals, onBack, onOpenAnimal, initialTab, on
 
   return (
     <div className="fixed inset-0 z-30 overflow-y-auto" style={{ backgroundColor: "#F9EFE4" }}>
-      <div
-        className="sticky top-0 z-10 backdrop-blur border-b border-[#D9CFB8] px-5 pt-6 pb-4"
-        style={{ backgroundColor: "rgba(249, 239, 228, 0.95)" }}
-      >
-        <div className="flex items-center justify-between gap-3 mb-3">
-          <div className="min-w-0">
-            <p className="text-xs uppercase tracking-wide text-[#8A8672]">Historie</p>
-            <h1 className="font-slab text-lg font-bold text-[#2B2A26] truncate">
-              {formatEarTag(current.earTag) || "ausstehend"}
-              {current.name ? ` – ${current.name}` : ""}
-            </h1>
-          </div>
-          <button
-            type="button"
-            onClick={onBack}
-            className="shrink-0 text-xs font-semibold rounded-lg px-3 py-1.5 transition"
-            style={{ color: "#FFFFFF", backgroundColor: "#2B2A26" }}
-          >
-            Zurück
-          </button>
+      <header className="border-b border-[#D9CFB8] px-5 pt-6 pb-4" style={{ backgroundColor: "#F9EFE4" }}>
+        <p className="text-xs uppercase tracking-[0.2em] text-[#6B6858] mb-1">Historie</p>
+        <h1 className="font-slab text-2xl font-bold text-[#2B2A26] truncate">
+          {formatEarTag(current.earTag) || "ausstehend"}
+          {current.name ? ` – ${current.name}` : ""}
+        </h1>
+
+        <div className={`grid gap-2 mt-4 ${visibleTabs.length >= 4 ? "grid-cols-4" : "grid-cols-3"}`}>
+          {visibleTabs.map(([key, label]) => {
+            const anzahl =
+              key === "brunsthistorie"
+                ? breedingEvents.length
+                : key === "stallbuch"
+                ? allAnimals.filter((a) => current.earTag && sameEarTag(a.fatherEarTag, current.earTag)).length
+                : key === "nachkommen"
+                ? descendants.length
+                : key === "stallbewegung"
+                ? stallEvents.length + (stallOhneDatum ? 1 : 0)
+                : deckbullenOverlaps.length;
+            return (
+              <button
+                key={key}
+                type="button"
+                onClick={() => setTab(key)}
+                className="h-[68px] bg-white text-[#2B2A26] border border-[#D9CFB8] rounded-lg px-1 py-2 flex flex-col items-center justify-center text-center transition overflow-hidden"
+                style={tab === key ? { boxShadow: "0 0 0 2px #2B2A26 inset" } : undefined}
+              >
+                <p className="text-[10px] uppercase tracking-wide text-[#6B6858] truncate w-full">{label}</p>
+                <p className="font-slab font-bold" style={{ fontSize: "20px", lineHeight: "1.2", fontVariantNumeric: "tabular-nums", fontFamily: "'Arvo', serif" }}>
+                  {anzahl}
+                </p>
+              </button>
+            );
+          })}
         </div>
-        <div className="flex rounded-full border border-[#D9CFB8] bg-white p-0.5 gap-0.5 overflow-x-auto">
-          {visibleTabs.map(([key, label]) => (
+
+        <div className="flex items-center justify-between gap-2 mt-3">
+          <p className="text-[11px] text-[#8A8672] min-w-0">
+            {CATEGORY_SINGULAR[current.category] || current.category}
+            {current.birthDate ? ` · geb. ${formatDate(current.birthDate)}` : ""}
+          </p>
+          <div className="flex items-center justify-end gap-2 shrink-0 ml-auto">
+            {onTierWechseln && (
+              <button
+                type="button"
+                onClick={onTierWechseln}
+                className="text-xs font-semibold rounded-lg px-3 py-1.5 transition whitespace-nowrap"
+                style={{ color: "#2B2A26", backgroundColor: "#FFFFFF", border: "1px solid #D9CFB8" }}
+              >
+                Tier wechseln
+              </button>
+            )}
             <button
-              key={key}
               type="button"
-              onClick={() => setTab(key)}
-              className="text-[13px] font-medium rounded-full px-3 py-1.5 whitespace-nowrap flex-1"
-              style={
-                tab === key
-                  ? { backgroundColor: "#2B2A26", color: "#F2EBDD" }
-                  : { backgroundColor: "transparent", color: "#6B6858" }
-              }
+              onClick={onBack}
+              className="text-xs font-semibold rounded-lg px-3 py-1.5 transition whitespace-nowrap"
+              style={{ color: "#FFFFFF", backgroundColor: "#2B2A26", border: "1px solid #2B2A26" }}
             >
-              {label}
+              Zurück
             </button>
-          ))}
+          </div>
         </div>
-      </div>
+      </header>
 
       <div className="px-5 py-4 pb-10">
-        {tab === "brunsthistorie" && (
-          <>
-            <p className="text-xs mb-3" style={{ color: "#8A8672" }}>
-              Alle erfassten Brunst-/Besamungs-Ereignisse dieses Tieres, neueste zuerst.
-            </p>
-            {breedingEvents.length === 0 ? (
-              <p className="text-sm text-center py-6" style={{ color: "#B0A98F" }}>
-                Noch keine Ereignisse erfasst.
-              </p>
-            ) : (
-              <div className="flex flex-col gap-2">
-                {breedingEvents.map((ev, i) => {
-                  const info = BREEDING_HISTORY_LABELS[ev.type] || { label: ev.type, color: "#6B6858" };
-                  return (
-                    <div key={i} className="flex items-center justify-between rounded-xl border p-3" style={{ borderColor: "#D9CFB8", backgroundColor: "#FFFFFF" }}>
-                      <span className="text-sm" style={{ color: info.color }}>
-                        {info.label}
-                      </span>
-                      <span className="text-xs" style={{ color: "#8A8672" }}>
-                        {new Date(ev.date).toLocaleDateString("de-DE")}
-                      </span>
-                    </div>
-                  );
-                })}
-              </div>
+        {(tab === "brunsthistorie" || tab === "stallbuch") && (
+          <StallbuchInhalt animal={current} allAnimals={allAnimals} onOpenAnimal={onOpenAnimal} onUpdateField={onUpdateField}>
+            {tab === "brunsthistorie" && (
+              <SbBox title={`Brunst- und Besamungsereignisse (${breedingEvents.length})`}>
+                {breedingEvents.length === 0 ? (
+                  <p className="px-3 py-3 text-sm text-[#8A8672] italic">Noch keine Ereignisse erfasst.</p>
+                ) : (
+                  <div>
+                    {breedingEvents.map((ev, i) => {
+                      const info = BREEDING_HISTORY_LABELS[ev.type] || { label: ev.type, color: "#6B6858" };
+                      return (
+                        <div key={i} className="flex items-center justify-between gap-2 px-3 py-2 border-b border-[#F9EFE4]">
+                          <span className="text-sm" style={{ color: info.color }}>
+                            {info.label}
+                            {ev.bull ? ` · Bulle ${formatEarTag(ev.bull)}` : ""}
+                          </span>
+                          <span className="text-xs shrink-0" style={{ color: "#8A8672" }}>
+                            {formatDate(ev.date)}
+                          </span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+                <p className="px-3 py-2 text-[11px] text-[#6B6858] border-t border-[#D9CFB8]">Neueste zuerst.</p>
+              </SbBox>
             )}
-          </>
+          </StallbuchInhalt>
         )}
 
         {tab === "nachkommen" && (
@@ -3799,7 +3834,8 @@ function SbTable({ head, rows, minWidth = 520 }) {
   );
 }
 
-function StallbuchView({ animal, allAnimals = [], onBack, onOpenAnimal, onUpdateField }) {
+// Stallbuchblatt-Inhalt (nach Vorbild LKV); wird in der Historie unter "Brunsthistorie" bzw. "Stallbuch" gezeigt
+function StallbuchInhalt({ animal, allAnimals = [], onOpenAnimal, onUpdateField, children }) {
   const isAdmin = useContext(AppModeContext) === "admin";
   const cowStatsSb = useContext(CowStatsContext);
   const current = allAnimals.find((a) => a.id === animal.id) || animal;
@@ -3886,29 +3922,7 @@ function StallbuchView({ animal, allAnimals = [], onBack, onOpenAnimal, onUpdate
     : [];
 
   return (
-    <div className="fixed inset-0 z-30 overflow-y-auto" style={{ backgroundColor: "#F9EFE4" }}>
-      <div
-        className="sticky top-0 z-10 backdrop-blur border-b border-[#D9CFB8] px-5 pt-6 pb-4 flex items-center justify-between gap-3"
-        style={{ backgroundColor: "rgba(249, 239, 228, 0.95)" }}
-      >
-        <div className="min-w-0">
-          <p className="text-xs uppercase tracking-wide text-[#8A8672]">Stallbuchblatt</p>
-          <h1 className="font-slab text-lg font-bold text-[#2B2A26] truncate">
-            {formatEarTag(current.earTag) || "ausstehend"}
-            {current.name ? ` – ${current.name}` : ""}
-          </h1>
-        </div>
-        <button
-          type="button"
-          onClick={onBack}
-          className="shrink-0 text-xs font-semibold rounded-lg px-3 py-1.5 transition"
-          style={{ color: "#FFFFFF", backgroundColor: "#2B2A26" }}
-        >
-          Zurück
-        </button>
-      </div>
-
-      <div className="px-5 py-4 pb-10 max-w-3xl mx-auto">
+      <div>
         <SbBox title="Tier">
           <div className="grid grid-cols-2 sm:grid-cols-4">
             <SbField label="Ohrmarke">{formatEarTag(current.earTag)}</SbField>
@@ -4050,8 +4064,8 @@ function StallbuchView({ animal, allAnimals = [], onBack, onOpenAnimal, onUpdate
             )}
           </SbBox>
         )}
+        {children}
       </div>
-    </div>
   );
 }
 
@@ -7104,6 +7118,119 @@ function KalenderView({ birthsByDate, animals, onOpenAnimal, onUpdateAnimal, onO
   );
 }
 
+// Historie von der Hauptseite: erst das Tier auswählen
+function HistorieAuswahlView({ animals, onBack, onSelect }) {
+  const [filter, setFilter] = useState("Alle");
+  const [suche, setSuche] = useState("");
+  const gruppen = ["Alle", ...CATEGORIES, "Abgänge"];
+  const imBestand = (a) => CATEGORIES.includes(a.category);
+  const passt = (a) => (filter === "Alle" ? imBestand(a) : a.category === filter);
+  const q = suche.trim().toLowerCase();
+  const qTag = cleanEarTag(suche);
+  const liste = animals
+    .filter((a) => a.category !== "Unregistriert")
+    .filter((a) =>
+      q
+        ? (qTag && cleanEarTag(a.earTag).includes(qTag)) ||
+          (a.name || "").toLowerCase().includes(q) ||
+          (a.breed || "").toLowerCase().includes(q)
+        : passt(a)
+    )
+    .sort((x, y) => {
+      const cx = CATEGORIES.indexOf(x.category);
+      const cy = CATEGORIES.indexOf(y.category);
+      if (cx !== cy) return (cx < 0 ? 99 : cx) - (cy < 0 ? 99 : cy);
+      return cleanEarTag(x.earTag) < cleanEarTag(y.earTag) ? -1 : 1;
+    });
+  const anzahl = (g) => animals.filter((a) => (g === "Alle" ? imBestand(a) : a.category === g)).length;
+
+  return (
+    <div className="fixed inset-0 z-30 overflow-y-auto" style={{ backgroundColor: "#F9EFE4" }}>
+      <header className="border-b border-[#D9CFB8] px-5 pt-6 pb-4" style={{ backgroundColor: "#F9EFE4" }}>
+        <p className="text-xs uppercase tracking-[0.2em] text-[#6B6858] mb-1">Übersicht</p>
+        <h1 className="font-slab text-2xl font-bold text-[#2B2A26]">Historie</h1>
+        <div className="grid grid-cols-3 gap-2 mt-4">
+          {gruppen.map((g) => {
+            const farbe = g === "Alle" ? null : colorForCategory(g);
+            return (
+              <button
+                key={g}
+                type="button"
+                onClick={() => {
+                  setFilter(g);
+                  setSuche("");
+                }}
+                className="h-[68px] rounded-lg px-1 py-2 flex flex-col items-center justify-center text-center overflow-hidden transition border"
+                style={{
+                  backgroundColor: farbe ? farbe.bg : "#FFFFFF",
+                  color: farbe ? farbe.fg : "#2B2A26",
+                  borderColor: farbe ? "transparent" : "#D9CFB8",
+                  boxShadow: filter === g && !q ? "0 0 0 2px #2B2A26 inset" : undefined,
+                }}
+              >
+                <p className="text-[10px] uppercase tracking-wide opacity-80 truncate w-full">{g === "Alle" ? "Gesamt" : g}</p>
+                <p className="font-slab font-bold" style={{ fontSize: "20px", lineHeight: "1.2", fontVariantNumeric: "tabular-nums", fontFamily: "'Arvo', serif" }}>
+                  {anzahl(g)}
+                </p>
+              </button>
+            );
+          })}
+        </div>
+        <input
+          value={suche}
+          onChange={(e) => setSuche(e.target.value)}
+          placeholder="Tier suchen: Ohrmarke, Name oder Rasse…"
+          className="w-full mt-3 px-3 py-2 rounded-lg border border-[#D9CFB8] bg-white text-[#2B2A26] text-sm focus:outline-none focus:ring-2 focus:ring-[#4C6B3F]"
+        />
+        <div className="flex items-center justify-between gap-2 mt-3">
+          <p className="text-[11px] text-[#8A8672]">Von welchem Tier möchtest du die Historie sehen?</p>
+          <button
+            type="button"
+            onClick={onBack}
+            className="shrink-0 text-xs font-semibold rounded-lg px-3 py-1.5 transition whitespace-nowrap"
+            style={{ color: "#FFFFFF", backgroundColor: "#2B2A26", border: "1px solid #2B2A26" }}
+          >
+            Zurück
+          </button>
+        </div>
+      </header>
+      <div className="px-5 py-4 pb-10 flex flex-col gap-2">
+        {liste.length === 0 ? (
+          <p className="text-sm text-[#B0A98F] italic px-0.5">Kein Tier gefunden.</p>
+        ) : (
+          liste.map((a) => {
+            const farbe = colorForCategory(a.category);
+            return (
+              <button
+                key={a.id}
+                type="button"
+                onClick={() => onSelect(a)}
+                className="w-full rounded-xl border bg-white px-4 py-2.5 flex items-center justify-between gap-3 text-left"
+                style={{ borderColor: "#D9CFB8" }}
+              >
+                <span className="min-w-0">
+                  <span className="block font-slab text-sm font-bold text-[#2B2A26] truncate">
+                    {formatEarTag(a.earTag) || "ausstehend"}
+                    {a.name ? ` – ${a.name}` : ""}
+                  </span>
+                  <span className="block text-xs text-[#6B6858]">
+                    {a.category === "Abgänge" ? verbleibText(a) : CATEGORY_SINGULAR[a.category] || a.category}
+                    {a.birthDate ? ` · geb. ${formatDate(a.birthDate)}` : ""}
+                  </span>
+                </span>
+                <span className="shrink-0 flex items-center gap-2">
+                  <span className="w-3 h-3 rounded-full" style={{ backgroundColor: farbe.bg }} />
+                  <ChevronRight size={18} style={{ color: "#2B2A26" }} />
+                </span>
+              </button>
+            );
+          })
+        )}
+      </div>
+    </div>
+  );
+}
+
 function JahresuebersichtView({ animals, onBack }) {
   const [reiter, setReiter] = useState("aktuell"); // aktuell | vergangen
   const heute = isoDateKey(new Date());
@@ -7674,8 +7801,8 @@ function RinderbestandApp() {
   const [historieTab, setHistorieTab] = useState("brunsthistorie");
   const [historieReturnTo, setHistorieReturnTo] = useState(null);
   const [historieReturnToBrunstliste, setHistorieReturnToBrunstliste] = useState(false);
-  const [stallbuchAnimal, setStallbuchAnimal] = useState(null);
-  const [stallbuchReturnTo, setStallbuchReturnTo] = useState(null);
+  const [historieAuswahlOpen, setHistorieAuswahlOpen] = useState(false);
+  const [historieReturnToAuswahl, setHistorieReturnToAuswahl] = useState(false);
   const [abgangAnimal, setAbgangAnimal] = useState(null);
   const [abgangReturnTo, setAbgangReturnTo] = useState(null);
   const [stammbaumOpen, setStammbaumOpen] = useState(false);
@@ -8028,8 +8155,8 @@ function RinderbestandApp() {
     if (betriebeOpen) return "#/betriebe";
     if (jahresOpen) return "#/jahresuebersicht";
     if (kalenderOpen) return "#/kalender";
+    if (historieAuswahlOpen) return "#/historie";
     if (stammbaumOpen) return "#/stammbaum";
-    if (stallbuchAnimal) return `#/tier/${rid(stallbuchAnimal)}/stallbuch`;
     if (historieAnimal) return `#/tier/${rid(historieAnimal)}/historie/${encodeURIComponent(historieTab)}`;
     if (listView) return `#/liste/${ROUTE_LIST_SLUGS[listView] || "gesamt"}`;
     return "#/";
@@ -8052,8 +8179,8 @@ function RinderbestandApp() {
     setHistorieAnimal(null);
     setHistorieReturnTo(null);
     setHistorieReturnToBrunstliste(false);
-    setStallbuchAnimal(null);
-    setStallbuchReturnTo(null);
+    setHistorieAuswahlOpen(false);
+    setHistorieReturnToAuswahl(false);
     setAbgangAnimal(null);
     setAbgangReturnTo(null);
     setStammbaumOpen(false);
@@ -8085,6 +8212,7 @@ function RinderbestandApp() {
     if (p0 === "betriebe") return setBetriebeOpen(true);
     if (p0 === "jahresuebersicht") return setJahresOpen(true);
     if (p0 === "kalender") return setKalenderOpen(true);
+    if (p0 === "historie") return setHistorieAuswahlOpen(true);
     if (p0 === "brunstliste") return setBrunstlisteOpen(true);
     if (p0 === "neu") {
       if (!isAdmin) return;
@@ -8100,13 +8228,15 @@ function RinderbestandApp() {
       if (!p2) return setPassAnimal(a);
       if (p2 === "historie") {
         setHistorieAnimal(a);
-        setHistorieTab(p3 || "nachkommen");
+        setHistorieTab(p3 || historieStartTab(a));
         setHistorieReturnTo(a);
         return;
       }
       if (p2 === "stallbuch") {
-        setStallbuchAnimal(a);
-        setStallbuchReturnTo(a);
+        // Stallbuch ist jetzt Teil der Historie (alte Lesezeichen funktionieren weiter)
+        setHistorieAnimal(a);
+        setHistorieTab(historieStartTab(a));
+        setHistorieReturnTo(a);
         return;
       }
       if (!isAdmin) return setPassAnimal(a); // Besucher dürfen keine Formulare öffnen
@@ -8309,6 +8439,7 @@ function RinderbestandApp() {
                 { label: "Betriebe", onClick: () => setBetriebeOpen(true) },
                 { label: "Abgänge", sub: `${animals.filter((a) => a.category === "Abgänge").length} Stück`, onClick: () => setListView("Abgänge") },
                 { label: "Jahresübersicht", onClick: () => setJahresOpen(true) },
+                { label: "Historie", sub: "Brunsthistorie, Stallbuch, Nachkommen …", onClick: () => setHistorieAuswahlOpen(true) },
                 { label: "Unregistrierte Tiere", sub: `${animals.filter((a) => a.category === "Unregistriert").length} Stück`, onClick: () => setListView("Unregistriert") },
                 { label: "Samenbank", onClick: () => {} },
               ].map((item) => (
@@ -8894,7 +9025,7 @@ function RinderbestandApp() {
           onOpenAnimal={(a) => setPassAnimal(a)}
           onShowAllDescendants={(a) => {
             setHistorieAnimal(a);
-            setHistorieTab("nachkommen");
+            setHistorieTab(historieStartTab(a));
             setHistorieReturnTo(a);
             setPassAnimal(null);
           }}
@@ -8904,11 +9035,6 @@ function RinderbestandApp() {
             setHistorieAnimal(a);
             setHistorieTab("brunsthistorie");
             setHistorieReturnTo(a);
-            setPassAnimal(null);
-          }}
-          onOpenStallbuch={(a) => {
-            setStallbuchAnimal(a);
-            setStallbuchReturnTo(a);
             setPassAnimal(null);
           }}
           onRequestAbgang={(a) => {
@@ -8936,33 +9062,44 @@ function RinderbestandApp() {
         />
       )}
 
+      {historieAuswahlOpen && (
+        <HistorieAuswahlView
+          animals={animals}
+          onBack={() => setHistorieAuswahlOpen(false)}
+          onSelect={(a) => {
+            setHistorieAnimal(a);
+            setHistorieTab(historieStartTab(a));
+            setHistorieReturnTo(null);
+            setHistorieReturnToAuswahl(true);
+            setHistorieAuswahlOpen(false);
+          }}
+        />
+      )}
+
       {historieAnimal && (
         <HistorieView
+          key={historieAnimal.id}
           animal={historieAnimal}
           allAnimals={animals}
           initialTab={historieTab}
           onTabChange={(t) => setHistorieTab(t)}
           onOpenAnimal={(a) => setPassAnimal(a)}
+          onUpdateField={handleUpdateField}
+          onTierWechseln={() => {
+            setHistorieAnimal(null);
+            setHistorieReturnTo(null);
+            setHistorieReturnToBrunstliste(false);
+            setHistorieReturnToAuswahl(false);
+            setHistorieAuswahlOpen(true);
+          }}
           onBack={() => {
             if (historieReturnToBrunstliste) setBrunstlisteOpen(true);
+            else if (historieReturnToAuswahl) setHistorieAuswahlOpen(true);
             else if (historieReturnTo) setPassAnimal(historieReturnTo);
             setHistorieReturnToBrunstliste(false);
+            setHistorieReturnToAuswahl(false);
             setHistorieReturnTo(null);
             setHistorieAnimal(null);
-          }}
-        />
-      )}
-
-      {stallbuchAnimal && (
-        <StallbuchView
-          animal={stallbuchAnimal}
-          allAnimals={animals}
-          onOpenAnimal={(a) => setPassAnimal(a)}
-          onUpdateField={handleUpdateField}
-          onBack={() => {
-            if (stallbuchReturnTo) setPassAnimal(stallbuchReturnTo);
-            setStallbuchReturnTo(null);
-            setStallbuchAnimal(null);
           }}
         />
       )}
