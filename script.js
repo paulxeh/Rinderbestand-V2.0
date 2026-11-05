@@ -8195,41 +8195,9 @@ function RinderbestandApp() {
     });
   };
 
-  const [appMode, setAppModeRaw] = useState("admin");
-
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      try {
-        const res = await window.storage.get("cattle:appMode", false);
-        if (!cancelled && res?.value === "besucher") setAppModeRaw("besucher");
-      } catch (e) {
-        // noch kein Modus gespeichert
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
-  const setAppMode = (next) => {
-    setAppModeRaw(next);
-    window.storage.set("cattle:appMode", next, false).catch(() => {});
-  };
-  const [pwPromptOpen, setPwPromptOpen] = useState(false);
-  const [pwInput, setPwInput] = useState("");
-  const [pwError, setPwError] = useState("");
-  const ADMIN_PASSWORD = "1937";
-  const checkAdminPassword = () => {
-    if (pwInput === ADMIN_PASSWORD) {
-      setAppMode("admin");
-      setPwPromptOpen(false);
-      setPwInput("");
-      setPwError("");
-    } else {
-      setPwError("Falsches Passwort.");
-    }
-  };
+  // Die App startet immer im Besuchermodus; Admin wird im Menü ohne Code eingeschaltet
+  // und gilt nur, bis die App wieder geschlossen bzw. neu geladen wird.
+  const [appMode, setAppMode] = useState("besucher");
 
   const [addPickerOpen, setAddPickerOpen] = useState(false);
   const [moveFlowOpen, setMoveFlowOpen] = useState(false);
@@ -8568,7 +8536,6 @@ function RinderbestandApp() {
     setFormRegistering(false);
     setMainMenuOpen(false);
     setSettingsOpen(false);
-    setPwPromptOpen(false);
     setAddPickerOpen(false);
     setMoveFlowOpen(false);
     setMoveFlowAnimal(null);
@@ -9039,6 +9006,22 @@ function RinderbestandApp() {
             <div className="flex flex-col gap-2">
               <button
                 type="button"
+                onClick={() => setAppMode(appMode === "admin" ? "besucher" : "admin")}
+                className="w-full flex items-center justify-between gap-3 px-4 py-3 rounded-lg border border-[#D9CFB8] hover:bg-[#F9EFE4] transition"
+                aria-label={appMode === "admin" ? "Zum Besuchermodus wechseln" : "Zum Admin-Modus wechseln"}
+              >
+                <span className="text-left">
+                  <span className="block font-semibold text-[#2B2A26]">Modus: {appMode === "admin" ? "Admin" : "Besucher"}</span>
+                  <span className="block text-xs text-[#8A8672]">
+                    {appMode === "admin" ? "Bearbeiten aktiv · tippen für Besucher" : "Nur Ansehen · tippen für Admin"}
+                  </span>
+                </span>
+                <span className="shrink-0 w-10 h-6 rounded-full relative transition" style={{ backgroundColor: appMode === "admin" ? "#4C6B3F" : "#D9CFB8" }}>
+                  <span className="absolute top-0.5 w-5 h-5 rounded-full bg-white transition" style={{ left: appMode === "admin" ? 18 : 2 }} />
+                </span>
+              </button>
+              <button
+                type="button"
                 onClick={() => {
                   setMainMenuOpen(false);
                   setSettingsOpen(true);
@@ -9103,15 +9086,7 @@ function RinderbestandApp() {
             <div className="flex flex-col gap-2">
               <button
                 type="button"
-                onClick={() => {
-                  if (appMode === "admin") {
-                    setAppMode("besucher");
-                  } else {
-                    setPwInput("");
-                    setPwError("");
-                    setPwPromptOpen(true);
-                  }
-                }}
+                onClick={() => setAppMode(appMode === "admin" ? "besucher" : "admin")}
                 className="w-full flex items-center justify-between px-4 py-3 rounded-lg border border-[#D9CFB8] hover:bg-[#F9EFE4] transition"
               >
                 <span className="text-left">
@@ -9120,17 +9095,17 @@ function RinderbestandApp() {
                   </span>
                   <span className="block text-xs text-[#8A8672]">
                     {appMode === "admin"
-                      ? "Wechsle zu Besucher, um nur Ansehen zu erlauben (keine Änderungen)."
-                      : "Nur Ansehen aktiv. Zum Bearbeiten zurück zu Admin wechseln."}
+                      ? "Bearbeiten aktiv. Tippen, um zurück zu Besucher (nur Ansehen) zu wechseln."
+                      : "Nur Ansehen aktiv. Tippen, um zum Bearbeiten in den Admin-Modus zu wechseln."}
                   </span>
                 </span>
                 <span
                   className="shrink-0 w-10 h-6 rounded-full relative transition"
-                  style={{ backgroundColor: appMode === "besucher" ? "#4C6B3F" : "#D9CFB8" }}
+                  style={{ backgroundColor: appMode === "admin" ? "#4C6B3F" : "#D9CFB8" }}
                 >
                   <span
                     className="absolute top-0.5 w-5 h-5 rounded-full bg-white transition"
-                    style={{ left: appMode === "besucher" ? 18 : 2 }}
+                    style={{ left: appMode === "admin" ? 18 : 2 }}
                   />
                 </span>
               </button>
@@ -9196,50 +9171,6 @@ function RinderbestandApp() {
                 </button>
               )}
             </div>
-          </div>
-        </div>
-      )}
-
-      {pwPromptOpen && (
-        <div
-          className="fixed inset-0 z-30 flex items-end sm:items-center justify-center"
-          style={{ position: "fixed", top: 0, right: 0, bottom: 0, left: 0, backgroundColor: "rgba(0,0,0,0.4)" }}
-          onClick={() => setPwPromptOpen(false)}
-        >
-          <div
-            onClick={(e) => e.stopPropagation()}
-            className="w-full sm:max-w-sm bg-white rounded-t-2xl sm:rounded-2xl border border-[#D9CFB8] p-5 pb-6"
-          >
-            <div className="flex items-center justify-between mb-3">
-              <h2 className="font-slab text-lg font-bold text-[#2B2A26]">Admin-Passwort</h2>
-              <button
-                type="button"
-                onClick={() => setPwPromptOpen(false)}
-                className="p-1 text-[#8A8672] hover:text-[#2B2A26]"
-              >
-                <X size={20} />
-              </button>
-            </div>
-            <p className="text-sm text-[#8A8672] mb-3">Gib das Passwort ein, um in den Admin-Modus zu wechseln.</p>
-            <input
-              type="password"
-              value={pwInput}
-              autoFocus
-              onChange={(e) => setPwInput(e.target.value)}
-              onKeyDown={(e) => e.key === "Enter" && checkAdminPassword()}
-              placeholder="Passwort"
-              className="w-full mb-3 px-3 py-2 rounded-lg border bg-white text-[#2B2A26] text-sm focus:outline-none"
-              style={{ borderColor: pwError ? "#BB201D" : "#9CA3AF" }}
-            />
-            {pwError && <p className="text-[#BB201D] text-sm mb-3">{pwError}</p>}
-            <button
-              type="button"
-              onClick={checkAdminPassword}
-              className="w-full py-2.5 rounded-lg font-semibold"
-              style={{ backgroundColor: "#2B2A26", color: "#FFFFFF" }}
-            >
-              Bestätigen
-            </button>
           </div>
         </div>
       )}
