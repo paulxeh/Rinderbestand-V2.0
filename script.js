@@ -2789,7 +2789,7 @@ function SectionTable({ title, color, animals, onOpenAnimal, showParents, showGe
                 {showAbgangsGrund && th("abgangsart", "Abgangsart")}
                 {th("birth", "Geb.datum")}
                 {th("alter", "Alter")}
-                {showNachkommen && th("nachkommen", "Nachkommen")}
+                {(showNachkommen || showBullInfo) && th("nachkommen", "Nachkommen")}
                 {showFirstCalving && th("ersteKalbung", "1. Kalbung")}
                 {showBullInfo && (
                   <>
@@ -2833,7 +2833,7 @@ function SectionTable({ title, color, animals, onOpenAnimal, showParents, showGe
                   <td className="px-3 py-2 text-[#2B2A26]">
                     {formatAgeShort(a.birthDate, a.category === "Abgänge" && a.abgangsDatum ? a.abgangsDatum : undefined)}
                   </td>
-                  {showNachkommen && <td className="px-3 py-2 text-[#2B2A26]" style={{ fontVariantNumeric: "tabular-nums" }}>{kidsOf(a)}</td>}
+                  {(showNachkommen || showBullInfo) && <td className="px-3 py-2 text-[#2B2A26]" style={{ fontVariantNumeric: "tabular-nums" }}>{kidsOf(a)}</td>}
                   {showFirstCalving && (
                     <td className="px-3 py-2 text-[#2B2A26] whitespace-nowrap">{kidCell(cowStats[cleanEarTag(a.earTag)]?.firstCalf)}</td>
                   )}
@@ -6702,6 +6702,362 @@ function betriebMatches(b, text) {
   return (nr && t.includes(nr)) || (nm && t.includes(nm));
 }
 
+/* --- Samenbank: Deckbullen und Samen --- */
+const SAMEN_KEY = "cattle:samen";
+const SAMEN_PINK = CATEGORY_COLORS["Samenbank"].bg; // RAL 510-2
+
+function useSamen() {
+  const [samen, setSamen] = useState([]);
+  const [loaded, setLoaded] = useState(false);
+  useEffect(() => {
+    let cancelled = false;
+    const laden = async () => {
+      let list = [];
+      try {
+        const res = await window.storage.get(SAMEN_KEY, false);
+        if (res?.value) list = JSON.parse(res.value);
+      } catch (e) {
+        // noch keine Samen gespeichert
+      }
+      if (!cancelled) {
+        setSamen(Array.isArray(list) ? list : []);
+        setLoaded(true);
+      }
+    };
+    laden();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+  const save = async (next) => {
+    setSamen(next);
+    try {
+      await window.storage.set(SAMEN_KEY, JSON.stringify(next), false);
+    } catch (e) {}
+  };
+  return { samen, loaded, save };
+}
+
+// Samenpass (Grundgerüst, wird später erweitert)
+function SamenPass({ eintrag, onClose, onEdit }) {
+  const isAdmin = useContext(AppModeContext) === "admin";
+  return (
+    <div
+      className="fixed inset-0 z-40 flex items-end sm:items-center justify-center"
+      style={{ position: "fixed", top: 0, right: 0, bottom: 0, left: 0, backgroundColor: "rgba(0,0,0,0.4)", paddingTop: "calc(env(safe-area-inset-top, 0px) + 12px)" }}
+      onClick={onClose}
+    >
+      <div onClick={(e) => e.stopPropagation()} className="relative w-full sm:max-w-lg">
+        <button
+          type="button"
+          onClick={onClose}
+          className="absolute top-3 right-3 z-10 w-9 h-9 rounded-full bg-white shadow-md flex items-center justify-center hover:bg-[#F2EBDD] transition"
+          aria-label="Pass schließen"
+        >
+          <X size={20} className="text-[#2B2A26]" />
+        </button>
+        <div className="w-full bg-white rounded-t-2xl sm:rounded-2xl border-2 overflow-y-auto" style={{ borderColor: PASS_BLUE, maxHeight: "min(94vh, 94dvh)" }}>
+          <p className="font-slab text-3xl font-bold px-4 pt-3 pb-2 text-left rounded-t-2xl" style={{ color: PASS_BLUE, backgroundColor: SAMEN_PINK }}>
+            Samenpass
+          </p>
+          <div className="px-5 py-4 rounded-b-2xl" style={{ backgroundColor: SAMEN_PINK }}>
+            <div className="flex items-center justify-center min-h-[72px] py-4 px-2 rounded-xl border mb-4 bg-white" style={{ borderColor: PASS_BLUE }}>
+              <span className="font-slab text-xl font-bold text-center break-all text-[#2B2A26]">
+                {eintrag.bulle || "Bulle ohne Namen"}
+              </span>
+            </div>
+            <div className="mx-8 mb-4">
+              <h3 className="text-xs font-semibold uppercase tracking-wide mb-1" style={{ color: PASS_BLUE }}>Samen</h3>
+              <div className="rounded-xl border bg-white px-3 py-1" style={{ borderColor: PASS_BLUE }}>
+                <InfoRow label="Bulle" value={eintrag.bulle || "–"} />
+                <InfoRow label="Ohrmarke / HB-Nr." value={eintrag.nummer ? formatEarTag(eintrag.nummer) : "–"} />
+                <InfoRow label="Rasse" value={eintrag.rasse || "–"} />
+                <InfoRow label="Besamungsstation" value={eintrag.station || "–"} />
+                <InfoRow label="Portionen auf Lager" value={eintrag.portionen !== "" && eintrag.portionen != null ? String(eintrag.portionen) : "–"} />
+              </div>
+            </div>
+            <div className="mx-8 mb-2">
+              <h3 className="text-xs font-semibold uppercase tracking-wide mb-1" style={{ color: PASS_BLUE }}>Notizen</h3>
+              <div className="rounded-xl border bg-white px-3 py-2 text-sm text-[#2B2A26] whitespace-pre-wrap" style={{ borderColor: PASS_BLUE }}>
+                {eintrag.notiz || "–"}
+              </div>
+            </div>
+            {isAdmin && (
+              <button
+                type="button"
+                onClick={onEdit}
+                className="w-full mt-4 py-2.5 rounded-lg font-semibold flex items-center justify-center gap-2"
+                style={{ backgroundColor: "#2B2A26", color: "#FFFFFF" }}
+              >
+                <Pencil size={16} />
+                Samenpass bearbeiten
+              </button>
+            )}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function SamenbankView({ animals, tab, onTabChange, onBack, onOpenAnimal }) {
+  const isAdmin = useContext(AppModeContext) === "admin";
+  const { samen, save } = useSamen();
+  const [search, setSearch] = useState("");
+  const [pass, setPass] = useState(null); // id
+  const [edit, setEdit] = useState(null);
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  const reiter = tab === "samen" ? "samen" : "deckbullen";
+  const term = search.trim().toLowerCase();
+  const termTag = cleanEarTag(search);
+
+  const deckbullen = animals.filter((a) => a.category === "Deckbullen");
+  const bullenListe = deckbullen.filter(
+    (a) => !term || (a.name || "").toLowerCase().includes(term) || (termTag && cleanEarTag(a.earTag).includes(termTag)) || (a.breed || "").toLowerCase().includes(term)
+  );
+  const samenListe = samen.filter(
+    (e) => !term || [e.bulle, e.rasse, e.station].some((v) => String(v || "").toLowerCase().includes(term)) || (termTag && cleanEarTag(e.nummer).includes(termTag))
+  );
+  const getValue = useCallback((e, key) => (key === "portionen" ? Number(e.portionen) || 0 : e[key] || ""), []);
+  const { sorted, th } = useTableSort(samenListe, getValue);
+
+  const leer = { bulle: "", nummer: "", rasse: "", station: "", portionen: "", notiz: "" };
+  const saveEdit = () => {
+    if (!edit || (!edit.bulle.trim() && !edit.nummer.trim())) return;
+    const clean = {
+      ...edit,
+      bulle: edit.bulle.trim(),
+      nummer: cleanEarTag(edit.nummer),
+      rasse: edit.rasse.trim(),
+      station: edit.station.trim(),
+      portionen: String(edit.portionen).trim() === "" ? "" : Math.max(0, parseInt(edit.portionen, 10) || 0),
+      notiz: edit.notiz.trim(),
+    };
+    const id = clean.id || generateId();
+    const next = clean.id ? samen.map((e) => (e.id === clean.id ? clean : e)) : [...samen, { ...clean, id }];
+    save(next);
+    setEdit(null);
+    setPass(id);
+  };
+
+  const Tile = ({ id, label, value }) => (
+    <button
+      type="button"
+      onClick={() => onTabChange(id)}
+      className="h-[68px] bg-white text-[#2B2A26] border border-[#D9CFB8] rounded-lg px-1 py-2 flex flex-col items-center justify-center text-center transition overflow-hidden"
+      style={reiter === id ? { boxShadow: "0 0 0 2px #2B2A26 inset" } : undefined}
+    >
+      <p className="text-[10px] uppercase tracking-wide text-[#6B6858] truncate w-full">{label}</p>
+      <p className="font-slab font-bold" style={{ fontSize: "20px", lineHeight: "1.2", fontVariantNumeric: "tabular-nums", fontFamily: "'Arvo', serif" }}>
+        {value}
+      </p>
+    </button>
+  );
+  const field = (label, key, placeholder, type = "text") => (
+    <>
+      <label className="block text-xs font-semibold uppercase tracking-wide text-[#6B6858] mb-1">{label}</label>
+      <input
+        type={type}
+        inputMode={type === "number" ? "numeric" : undefined}
+        min={type === "number" ? 0 : undefined}
+        value={edit[key]}
+        onChange={(e) => setEdit({ ...edit, [key]: e.target.value })}
+        placeholder={placeholder}
+        className="w-full mb-3 px-3 py-2 rounded-lg border bg-white text-[#2B2A26] text-sm"
+        style={{ borderColor: "#9CA3AF" }}
+      />
+    </>
+  );
+  const passEintrag = pass ? samen.find((e) => e.id === pass) : null;
+
+  return (
+    <div className="fixed inset-0 z-30 overflow-y-auto" style={{ backgroundColor: "#F9EFE4" }}>
+      <header className="border-b border-[#D9CFB8] px-5 pt-6 pb-4" style={{ backgroundColor: "#F9EFE4" }}>
+        <p className="text-xs uppercase tracking-[0.2em] text-[#6B6858] mb-1">Übersicht</p>
+        <h1 className="font-slab text-2xl font-bold text-[#2B2A26]">Samenbank</h1>
+
+        <div className="grid grid-cols-2 gap-2 mt-4">
+          <Tile id="deckbullen" label="Deckbullen" value={deckbullen.length} />
+          <Tile id="samen" label="Samen" value={samen.length} />
+        </div>
+
+        <input
+          type="text"
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          placeholder={reiter === "samen" ? "Suche nach Bulle, Nummer, Rasse oder Station…" : "Suche nach Name, Ohrmarke oder Rasse…"}
+          className="w-full mt-4 px-3 py-2 rounded-lg border border-[#D9CFB8] bg-white text-[#2B2A26] text-sm focus:outline-none focus:ring-2 focus:ring-[#4C6B3F]"
+        />
+
+        <div className="flex items-center justify-between gap-2 mt-3 flex-wrap">
+          <p className="text-[11px] text-[#8A8672]">Zum Sortieren auf eine Spaltenüberschrift tippen</p>
+          <div className="flex items-center justify-end gap-2 shrink-0 ml-auto">
+            {isAdmin && reiter === "samen" && (
+              <button
+                type="button"
+                onClick={() => {
+                  setConfirmDelete(false);
+                  setEdit({ ...leer });
+                }}
+                className="p-1.5 rounded-lg bg-white border border-[#D9CFB8] text-[#2B2A26]"
+                aria-label="Samen hinzufügen"
+              >
+                <Plus size={16} />
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={() => {
+                setSearch("");
+                onBack();
+              }}
+              className="text-xs font-semibold rounded-lg px-3 py-1.5 transition whitespace-nowrap"
+              style={{ color: "#FFFFFF", backgroundColor: "#2B2A26", border: "1px solid #2B2A26" }}
+            >
+              Zurück
+            </button>
+          </div>
+        </div>
+      </header>
+
+      <div className="px-5 py-4 pb-10">
+        {reiter === "deckbullen" ? (
+          <SectionTable title="Deckbullen" color={colorForCategory("Deckbullen")} animals={bullenListe} onOpenAnimal={onOpenAnimal} showBullInfo />
+        ) : (
+          <>
+            <div className="flex items-center gap-2 mb-2 px-0.5">
+              <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ backgroundColor: SAMEN_PINK }} />
+              <h2 className="font-slab text-[15px] font-bold text-[#2B2A26] uppercase tracking-wide">Samen</h2>
+              <span className="text-[12px] text-[#8A8672]">({samenListe.length})</span>
+            </div>
+            {samenListe.length === 0 ? (
+              <p className="text-sm text-[#B0A98F] italic px-0.5">
+                {term ? "Kein Samen gefunden." : isAdmin ? "Noch kein Samen eingetragen. Über das + hinzufügen." : "Noch kein Samen eingetragen."}
+              </p>
+            ) : (
+              <div className="rounded-xl border border-[#D9CFB8] bg-white overflow-x-auto">
+                <table className="w-full text-[13px]" style={{ borderCollapse: "separate", borderSpacing: 0, minWidth: 560 }}>
+                  <thead>
+                    <tr className="bg-white text-[#6B6858] text-[11px] uppercase tracking-wide">
+                      {th("bulle", "Bulle")}
+                      {th("nummer", "Ohrmarke / HB-Nr.")}
+                      {th("rasse", "Rasse")}
+                      {th("station", "Station")}
+                      {th("portionen", "Portionen")}
+                      <th className="w-6 px-2 py-2"></th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {sorted.map((e) => (
+                      <tr key={e.id} onClick={() => setPass(e.id)} className="border-t border-[#F9EFE4] cursor-pointer bg-white hover:bg-[#F9EFE4] transition">
+                        <td className="px-3 py-2 text-[#2B2A26] font-medium">{e.bulle || "–"}</td>
+                        <td className="px-3 py-2 text-[#2B2A26] whitespace-nowrap">{e.nummer ? formatEarTag(e.nummer) : "–"}</td>
+                        <td className="px-3 py-2 text-[#2B2A26]">{e.rasse || "–"}</td>
+                        <td className="px-3 py-2 text-[#2B2A26]">{e.station || "–"}</td>
+                        <td className="px-3 py-2 text-[#2B2A26]" style={{ fontVariantNumeric: "tabular-nums" }}>{e.portionen !== "" && e.portionen != null ? e.portionen : "–"}</td>
+                        <td className="px-2 py-2 text-[#B0A98F]"><ChevronRight size={16} /></td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </>
+        )}
+      </div>
+
+      {passEintrag && !edit && (
+        <SamenPass
+          eintrag={passEintrag}
+          onClose={() => setPass(null)}
+          onEdit={() => {
+            setConfirmDelete(false);
+            setEdit({ ...leer, ...passEintrag, portionen: passEintrag.portionen ?? "" });
+          }}
+        />
+      )}
+
+      {edit && (
+        <div
+          className="fixed inset-0 z-40 flex items-end sm:items-center justify-center"
+          style={{ position: "fixed", top: 0, right: 0, bottom: 0, left: 0, backgroundColor: "rgba(0,0,0,0.4)" }}
+          onClick={() => setEdit(null)}
+        >
+          <div onClick={(e) => e.stopPropagation()} className="w-full sm:max-w-sm bg-white rounded-t-2xl sm:rounded-2xl border border-[#D9CFB8] p-5 pb-6 max-h-[85vh] overflow-y-auto">
+            <div className="flex items-center justify-between mb-3">
+              <h2 className="font-slab text-lg font-bold text-[#2B2A26]">{edit.id ? "Samenpass bearbeiten" : "Samen hinzufügen"}</h2>
+              <button type="button" onClick={() => setEdit(null)} className="p-1 text-[#8A8672] hover:text-[#2B2A26]" aria-label="Schließen">
+                <X size={20} />
+              </button>
+            </div>
+            {field("Bulle (Name)", "bulle", "z. B. Hannibal")}
+            {field("Ohrmarke / HB-Nr. des Bullen", "nummer", "z. B. DE 09 123 45678")}
+            <label className="block text-xs font-semibold uppercase tracking-wide text-[#6B6858] mb-1">Rasse</label>
+            <select
+              value={edit.rasse}
+              onChange={(e) => setEdit({ ...edit, rasse: e.target.value })}
+              className="w-full mb-3 px-3 py-2 rounded-lg border bg-white text-[#2B2A26] text-sm"
+              style={{ borderColor: "#9CA3AF" }}
+            >
+              <option value="">– bitte wählen –</option>
+              {edit.rasse && !BREEDS.some((b) => b.name === edit.rasse) && <option value={edit.rasse}>{edit.rasse}</option>}
+              {BREEDS.map((b) => (
+                <option key={b.code} value={b.name}>
+                  {b.name} ({b.code})
+                </option>
+              ))}
+            </select>
+            {field("Besamungsstation / Anbieter", "station", "z. B. Rinderunion")}
+            {field("Portionen auf Lager", "portionen", "z. B. 10", "number")}
+            <label className="block text-xs font-semibold uppercase tracking-wide text-[#6B6858] mb-1">Notizen</label>
+            <textarea
+              value={edit.notiz}
+              onChange={(e) => setEdit({ ...edit, notiz: e.target.value })}
+              rows={2}
+              className="w-full mb-3 px-3 py-2 rounded-lg border bg-white text-[#2B2A26] text-sm"
+              style={{ borderColor: "#9CA3AF" }}
+            />
+            {!edit.bulle.trim() && !edit.nummer.trim() && <p className="text-xs text-[#8A8672] mb-2">Bitte mindestens Bulle oder Nummer eintragen.</p>}
+            <button
+              type="button"
+              onClick={saveEdit}
+              disabled={!edit.bulle.trim() && !edit.nummer.trim()}
+              className="w-full py-2.5 rounded-lg font-semibold disabled:opacity-40"
+              style={{ backgroundColor: "#2B2A26", color: "#FFFFFF" }}
+            >
+              Speichern
+            </button>
+            {edit.id &&
+              (confirmDelete ? (
+                <div className="flex gap-2 mt-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      save(samen.filter((e) => e.id !== edit.id));
+                      setEdit(null);
+                      setPass(null);
+                    }}
+                    className="flex-1 py-2 rounded-lg font-semibold"
+                    style={{ backgroundColor: "#BB201D", color: "#FFFFFF" }}
+                  >
+                    Wirklich löschen
+                  </button>
+                  <button type="button" onClick={() => setConfirmDelete(false)} className="flex-1 py-2 rounded-lg border border-[#D9CFB8] text-[#2B2A26]">
+                    Abbrechen
+                  </button>
+                </div>
+              ) : (
+                <button type="button" onClick={() => setConfirmDelete(true)} className="w-full mt-2 text-xs text-[#BB201D] underline">
+                  Samen löschen
+                </button>
+              ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function BetriebeView({ animals, onBack, onOpenAnimal }) {
   const isAdmin = useContext(AppModeContext) === "admin";
   const { betriebe, save } = useBetriebe();
@@ -7809,6 +8165,8 @@ function RinderbestandApp() {
   const [betriebeOpen, setBetriebeOpen] = useState(false);
   const [jahresOpen, setJahresOpen] = useState(false);
   const [kalenderOpen, setKalenderOpen] = useState(false);
+  const [samenbankOpen, setSamenbankOpen] = useState(false);
+  const [samenbankTab, setSamenbankTab] = useState("deckbullen");
   const [brunstlisteOpen, setBrunstlisteOpen] = useState(false);
   const [mainMenuOpen, setMainMenuOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -7878,6 +8236,7 @@ function RinderbestandApp() {
   const [moveFlowAnimal, setMoveFlowAnimal] = useState(null);
   const [exportOpen, setExportOpen] = useState(false);
   const [exportBetriebe, setExportBetriebe] = useState([]);
+  const [exportSamen, setExportSamen] = useState([]);
   useEffect(() => {
     if (!exportOpen) return;
     (async () => {
@@ -7887,9 +8246,15 @@ function RinderbestandApp() {
       } catch (e) {
         setExportBetriebe([]);
       }
+      try {
+        const res = await window.storage.get(SAMEN_KEY, false);
+        setExportSamen(res?.value ? JSON.parse(res.value) : []);
+      } catch (e) {
+        setExportSamen([]);
+      }
     })();
   }, [exportOpen]);
-  const exportText = () => JSON.stringify({ format: "rinderbestand", version: 2, animals, betriebe: exportBetriebe }, null, 2);
+  const exportText = () => JSON.stringify({ format: "rinderbestand", version: 2, animals, betriebe: exportBetriebe, samen: exportSamen }, null, 2);
   const [importOpen, setImportOpen] = useState(false);
   const [importText, setImportText] = useState("");
   const [importError, setImportError] = useState("");
@@ -8075,8 +8440,10 @@ function RinderbestandApp() {
     }
     // Neues Format: { animals: [...], betriebe: [...] } – altes Format: nur die Liste der Tiere
     let importBetriebe = null;
+    let importSamen = null;
     if (parsed && !Array.isArray(parsed) && Array.isArray(parsed.animals)) {
       if (Array.isArray(parsed.betriebe)) importBetriebe = parsed.betriebe;
+      if (Array.isArray(parsed.samen)) importSamen = parsed.samen;
       parsed = parsed.animals;
     }
     if (!Array.isArray(parsed)) {
@@ -8088,6 +8455,10 @@ function RinderbestandApp() {
     if (importBetriebe) {
       const list = importBetriebe.map((b) => ({ ...b, id: b.id || generateId() }));
       window.storage.set(BETRIEBE_KEY, JSON.stringify(list), false).catch(() => {});
+    }
+    if (importSamen) {
+      const list = importSamen.map((e) => ({ ...e, id: e.id || generateId() }));
+      window.storage.set(SAMEN_KEY, JSON.stringify(list), false).catch(() => {});
     }
     setImportError("");
     setImportOpen(false);
@@ -8154,6 +8525,7 @@ function RinderbestandApp() {
     if (betriebeOpen) return "#/betriebe";
     if (jahresOpen) return "#/jahresuebersicht";
     if (kalenderOpen) return "#/kalender";
+    if (samenbankOpen) return `#/samenbank/${samenbankTab}`;
     if (historieAuswahlOpen) return "#/historie";
     if (stammbaumOpen) return "#/stammbaum";
     if (historieAnimal) return `#/tier/${rid(historieAnimal)}/historie/${encodeURIComponent(historieTab)}`;
@@ -8187,6 +8559,7 @@ function RinderbestandApp() {
     setBetriebeOpen(false);
     setJahresOpen(false);
     setKalenderOpen(false);
+    setSamenbankOpen(false);
     setBrunstlisteOpen(false);
     setFormOpen(false);
     setEditing(null);
@@ -8211,6 +8584,10 @@ function RinderbestandApp() {
     if (p0 === "betriebe") return setBetriebeOpen(true);
     if (p0 === "jahresuebersicht") return setJahresOpen(true);
     if (p0 === "kalender") return setKalenderOpen(true);
+    if (p0 === "samenbank") {
+      setSamenbankTab(p1 === "samen" ? "samen" : "deckbullen");
+      return setSamenbankOpen(true);
+    }
     if (p0 === "historie") return setHistorieAuswahlOpen(true);
     if (p0 === "brunstliste") return setBrunstlisteOpen(true);
     if (p0 === "neu") {
@@ -8440,7 +8817,7 @@ function RinderbestandApp() {
                 { label: "Jahresübersicht", onClick: () => setJahresOpen(true) },
                 { label: "Historie", sub: "Brunsthistorie, Stallbuch, Nachkommen …", onClick: () => setHistorieAuswahlOpen(true) },
                 { label: "Unregistrierte Tiere", sub: `${animals.filter((a) => a.category === "Unregistriert").length} Stück`, onClick: () => setListView("Unregistriert") },
-                { label: "Samenbank", onClick: () => {} },
+                { label: "Samenbank", sub: "Deckbullen und Samen", onClick: () => { setSamenbankTab("deckbullen"); setSamenbankOpen(true); } },
               ].map((item) => (
                 <button
                   key={item.label}
@@ -9114,6 +9491,16 @@ function RinderbestandApp() {
       {staelleOpen && <StaelleView onBack={() => setStaelleOpen(false)} />}
 
       {jahresOpen && <JahresuebersichtView animals={animals} onBack={() => setJahresOpen(false)} />}
+
+      {samenbankOpen && (
+        <SamenbankView
+          animals={animals}
+          tab={samenbankTab}
+          onTabChange={setSamenbankTab}
+          onBack={() => setSamenbankOpen(false)}
+          onOpenAnimal={(a) => setPassAnimal(a)}
+        />
+      )}
 
       {kalenderOpen && (
         <KalenderView
