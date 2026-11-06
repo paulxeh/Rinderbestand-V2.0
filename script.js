@@ -306,6 +306,21 @@ window.bilder = {
     bildLaden.set(id, p);
     return p;
   },
+  // Bild aus einer Speicherdatei mit seiner bisherigen Nummer zurückschreiben
+  async mitIdSpeichern(id, data) {
+    if (!/^b_[a-z0-9_]+$/i.test(String(id || ""))) throw new Error("ungültige Bild-Nummer");
+    if (typeof data !== "string" || !/^data:image\//.test(data)) throw new Error("kein Bild");
+    if (data.length > 1000000) throw new Error("Bild zu groß");
+    if (cloud.user) {
+      await cloud.db
+        .collection("bilder")
+        .doc(id)
+        .set({ data, updatedAt: Date.now(), updatedBy: (cloud.user && cloud.user.email) || "" });
+    } else {
+      await idbTx("readwrite", (st) => st.put(data, id));
+    }
+    bildCache.set(id, data);
+  },
   async loeschen(id) {
     if (!id) return;
     bildCache.delete(id);
@@ -317,6 +332,23 @@ window.bilder = {
     }
   },
 };
+
+// Alle Bild-Nummern, die in den Tieren vorkommen (Profilbild, Merkmale, Auffälligkeiten)
+function bildIdsVon(animals) {
+  const ids = new Set();
+  (animals || []).forEach((a) => {
+    if (a.profilbild) ids.add(a.profilbild);
+    ["merkmaleBilder", "auffaelligkeitenBilder"].forEach((f) => {
+      if (Array.isArray(a[f])) a[f].forEach((id) => id && ids.add(id));
+    });
+  });
+  return [...ids];
+}
+
+function groesseText(zeichen) {
+  const mb = zeichen / (1024 * 1024);
+  return mb >= 1 ? `${mb.toLocaleString("de-DE", { maximumFractionDigits: 1 })} MB` : `${Math.max(1, Math.round(zeichen / 1024))} KB`;
+}
 
 /* --- Service Worker (optional, nur bei https/localhost) --- */
 // Service Worker fürs Offline-Caching (funktioniert nur, wenn die Seite über
@@ -8222,7 +8254,41 @@ function RinderbestandApp() {
       }
     })();
   }, [exportOpen]);
-  const exportText = () => JSON.stringify({ format: "rinderbestand", version: 2, animals, betriebe: exportBetriebe, samen: exportSamen }, null, 2);
+  // Bilder für die Speicherdatei (optional)
+  const [exportMitBildern, setExportMitBildern] = useState(true);
+  const [exportBilder, setExportBilder] = useState(null); // null = lädt, sonst { id: dataURL }
+  const [exportBilderFehlen, setExportBilderFehlen] = useState(0);
+  const exportBildIds = useMemo(() => (exportOpen ? bildIdsVon(animals) : []), [exportOpen, animals]);
+  useEffect(() => {
+    if (!exportOpen || !exportMitBildern) return;
+    let aktiv = true;
+    setExportBilder(null);
+    (async () => {
+      const map = {};
+      let fehlen = 0;
+      for (const id of exportBildIds) {
+        const d = await window.bilder.laden(id);
+        if (d) map[id] = d;
+        else fehlen++;
+      }
+      if (aktiv) {
+        setExportBilder(map);
+        setExportBilderFehlen(fehlen);
+      }
+    })();
+    return () => {
+      aktiv = false;
+    };
+  }, [exportOpen, exportMitBildern, exportBildIds]);
+  const exportBilderBereit = !exportMitBildern || exportBildIds.length === 0 || exportBilder !== null;
+  const exportDaten = () => {
+    const d = { format: "rinderbestand", version: 2, animals, betriebe: exportBetriebe, samen: exportSamen };
+    if (exportMitBildern && exportBilder && Object.keys(exportBilder).length) d.bilder = exportBilder;
+    return d;
+  };
+  // Mit Bildern ohne Einrückung, sonst wird die Datei unnötig groß
+  const exportText = () => (exportMitBildern && exportBildIds.length ? JSON.stringify(exportDaten()) : JSON.stringify(exportDaten(), null, 2));
+  const exportVorschau = () => JSON.stringify({ format: "rinderbestand", version: 2, animals, betriebe: exportBetriebe, samen: exportSamen }, null, 2);
   const [importOpen, setImportOpen] = useState(false);
   const [importText, setImportText] = useState("");
   const [importError, setImportError] = useState("");
@@ -8364,7 +8430,8 @@ function RinderbestandApp() {
     persist([...animalsRef.current, newAnimal]);
   };
 
-  const handleImport = () => {
+  const [importLaeuft, setImportLaeuft] = useState("");
+  const handleImport = async () => {
     let parsed;
     try {
       parsed = JSON.parse(importText);
@@ -8409,9 +8476,11 @@ function RinderbestandApp() {
     // Neues Format: { animals: [...], betriebe: [...] } – altes Format: nur die Liste der Tiere
     let importBetriebe = null;
     let importSamen = null;
+    let importBilder = null;
     if (parsed && !Array.isArray(parsed) && Array.isArray(parsed.animals)) {
       if (Array.isArray(parsed.betriebe)) importBetriebe = parsed.betriebe;
       if (Array.isArray(parsed.samen)) importSamen = parsed.samen;
+      if (parsed.bilder && typeof parsed.bilder === "object" && !Array.isArray(parsed.bilder)) importBilder = parsed.bilder;
       parsed = parsed.animals;
     }
     if (!Array.isArray(parsed)) {
@@ -8428,7 +8497,26 @@ function RinderbestandApp() {
       const list = importSamen.map((e) => ({ ...e, id: e.id || generateId() }));
       window.storage.set(SAMEN_KEY, JSON.stringify(list), false).catch(() => {});
     }
+    if (importBilder) {
+      const eintraege = Object.entries(importBilder);
+      let fehler = 0;
+      for (let i = 0; i < eintraege.length; i++) {
+        setImportLaeuft(`Bilder werden gespeichert: ${i + 1} von ${eintraege.length}…`);
+        try {
+          await window.bilder.mitIdSpeichern(eintraege[i][0], eintraege[i][1]);
+        } catch (e) {
+          console.error("Bild-Import", e);
+          fehler++;
+        }
+      }
+      setImportLaeuft("");
+      if (fehler) {
+        setImportError(`Tiere importiert, aber ${fehler} von ${eintraege.length} Bildern konnten nicht gespeichert werden.`);
+        return;
+      }
+    }
     setImportError("");
+    setImportText("");
     setImportOpen(false);
   };
 
@@ -9547,12 +9635,30 @@ function RinderbestandApp() {
                 <X size={20} />
               </button>
             </div>
+            {exportBildIds.length > 0 && (
+              <label className="flex items-start gap-3 mb-3 p-3 rounded-lg border border-[#D9CFB8] cursor-pointer">
+                <input type="checkbox" checked={exportMitBildern} onChange={(e) => setExportMitBildern(e.target.checked)} className="mt-0.5 w-4 h-4 shrink-0" />
+                <span className="text-sm text-[#2B2A26]">
+                  <span className="font-semibold">Bilder mitspeichern</span> ({exportBildIds.length} {exportBildIds.length === 1 ? "Bild" : "Bilder"})
+                  <span className="block text-xs text-[#8A8672]">
+                    {!exportMitBildern
+                      ? "Die Datei enthält nur die Daten, keine Fotos."
+                      : !exportBilderBereit
+                      ? "Bilder werden geladen…"
+                      : `Datei mit Bildern: ca. ${groesseText(exportText().length)}` +
+                        (exportBilderFehlen ? ` · ${exportBilderFehlen} Bild(er) nicht gefunden` : "")}
+                  </span>
+                </span>
+              </label>
+            )}
             <p className="text-sm text-[#8A8672] mb-3">
-              Kopiere den kompletten Text unten und füge ihn in der anderen Version bei „Daten importieren" ein.
+              {exportMitBildern && exportBildIds.length
+                ? "Lade die Datei herunter und wähle sie in der anderen Version bei „Daten importieren“ aus. Das Textfeld zeigt nur die Daten ohne Bilder."
+                : "Kopiere den kompletten Text unten und füge ihn in der anderen Version bei „Daten importieren\" ein."}
             </p>
             <textarea
               readOnly
-              value={exportText()}
+              value={exportVorschau()}
               rows={12}
               className="w-full mb-3 px-3 py-2 rounded-lg border bg-white text-[#2B2A26] text-xs font-mono focus:outline-none"
               style={{ borderColor: "#9CA3AF" }}
@@ -9561,6 +9667,7 @@ function RinderbestandApp() {
             <div className="flex gap-2 mb-2">
               <button
                 type="button"
+                disabled={!exportBilderBereit}
                 onClick={async () => {
                   try {
                     await navigator.clipboard.writeText(exportText());
@@ -9571,7 +9678,7 @@ function RinderbestandApp() {
                     // der Text im Feld oben lässt sich dann weiterhin manuell markieren und kopieren.
                   }
                 }}
-                className="flex-1 py-2.5 rounded-lg font-semibold"
+                className="flex-1 py-2.5 rounded-lg font-semibold disabled:opacity-40"
                 style={{ backgroundColor: "#2B2A26", color: "#FFFFFF" }}
               >
                 {importCopyOk ? "Kopiert!" : "In Zwischenablage kopieren"}
@@ -9579,6 +9686,7 @@ function RinderbestandApp() {
             </div>
             <button
               type="button"
+              disabled={!exportBilderBereit}
               onClick={() => {
                 const blob = new Blob([exportText()], { type: "text/plain" });
                 const url = URL.createObjectURL(blob);
@@ -9591,10 +9699,10 @@ function RinderbestandApp() {
                 document.body.removeChild(a);
                 URL.revokeObjectURL(url);
               }}
-              className="w-full py-2.5 rounded-lg font-semibold border"
+              className="w-full py-2.5 rounded-lg font-semibold border disabled:opacity-40"
               style={{ borderColor: "#2B2A26", color: "#2B2A26" }}
             >
-              Als Textdatei herunterladen
+              {exportBilderBereit ? "Als Textdatei herunterladen" : "Bilder werden geladen…"}
             </button>
           </div>
         </div>
@@ -9643,6 +9751,15 @@ function RinderbestandApp() {
               }}
               className="w-full mb-3 text-sm text-[#2B2A26]"
             />
+            {importText.length > 300000 ? (
+              <div className="w-full mb-3 px-3 py-3 rounded-lg border text-sm text-[#2B2A26]" style={{ borderColor: "#9CA3AF" }}>
+                Datei geladen (ca. {groesseText(importText.length)}
+                {/"bilder"\s*:\s*\{/.test(importText) ? ", mit Bildern" : ""}).{" "}
+                <button type="button" onClick={() => setImportText("")} className="underline text-[#8A8672]">
+                  Entfernen
+                </button>
+              </div>
+            ) : (
             <textarea
               value={importText}
               onChange={(e) => setImportText(e.target.value)}
@@ -9651,11 +9768,13 @@ function RinderbestandApp() {
               className="w-full mb-3 px-3 py-2 rounded-lg border bg-white text-[#2B2A26] text-xs font-mono focus:outline-none"
               style={{ borderColor: "#9CA3AF" }}
             />
+            )}
             {importError && <p className="text-[#8B3A3A] text-sm mb-3">{importError}</p>}
+            {importLaeuft && <p className="text-sm text-[#2B2A26] mb-3">{importLaeuft}</p>}
             <button
               type="button"
               onClick={handleImport}
-              disabled={!importText.trim()}
+              disabled={!importText.trim() || !!importLaeuft}
               className="w-full py-2.5 rounded-lg font-semibold disabled:opacity-40"
               style={{ backgroundColor: "#2B2A26", color: "#FFFFFF" }}
             >
