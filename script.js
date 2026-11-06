@@ -4274,6 +4274,51 @@ function DayAnimalsPicker({ dateLabel, animals, onSelect, onCancel }) {
   );
 }
 
+// Reihenfolge der Abschnitte auf der Hauptseite (für alle Geräte gespeichert)
+const HAUPTSEITE_KEY = "cattle:hauptseite";
+const HAUPTSEITE_STANDARD = [
+  "mitteilungen",
+  "kalender",
+  "brunstliste",
+  "bestand",
+  "stammbaum",
+  "staelle",
+  "betriebe",
+  "abgaenge",
+  "jahresuebersicht",
+  "historie",
+  "unregistriert",
+  "samenbank",
+];
+function hauptseiteOrdnen(liste) {
+  const bekannt = (Array.isArray(liste) ? liste : []).filter((k, i, a) => HAUPTSEITE_STANDARD.includes(k) && a.indexOf(k) === i);
+  // neue Abschnitte (später hinzugekommen) hinten anhängen
+  return [...bekannt, ...HAUPTSEITE_STANDARD.filter((k) => !bekannt.includes(k))];
+}
+function useHauptseiteReihenfolge() {
+  const [reihenfolge, setReihenfolge] = useState(HAUPTSEITE_STANDARD);
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await window.storage.get(HAUPTSEITE_KEY, false);
+        if (!cancelled && res?.value) setReihenfolge(hauptseiteOrdnen(JSON.parse(res.value)));
+      } catch (e) {
+        // noch keine eigene Reihenfolge gespeichert
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+  const speichern = (next) => {
+    const geordnet = hauptseiteOrdnen(next);
+    setReihenfolge(geordnet);
+    window.storage.set(HAUPTSEITE_KEY, JSON.stringify(geordnet), false).catch(() => {});
+  };
+  return [reihenfolge, speichern];
+}
+
 function NotesBox() {
   const isAdmin = useContext(AppModeContext) === "admin";
   const [notes, setNotes] = useState("");
@@ -4310,8 +4355,8 @@ function NotesBox() {
   };
 
   return (
-    <section className="mb-4 rounded-xl border border-[#D9CFB8] bg-white p-3">
-      <label className="block font-slab text-sm font-bold text-[#2B2A26] mb-1">Mitteilungen</label>
+    <section className="rounded-xl border border-[#D9CFB8] bg-white px-4 py-3">
+      <label className="block font-slab text-sm font-bold text-[#2B2A26] mb-2">Mitteilungen</label>
       <textarea
         value={notes}
         onChange={(e) => {
@@ -4673,7 +4718,7 @@ function BirthCalendar({ birthsByDate, onOpenAnimal, animals, onUpdateAnimal, on
   if (compact) {
     const heute = new Date();
     return (
-      <section className="mb-4 rounded-xl border border-[#D9CFB8] bg-white p-3">
+      <section className="rounded-xl border border-[#D9CFB8] bg-white px-4 py-3">
         <button
           type="button"
           onClick={onOpenFull}
@@ -8198,6 +8243,8 @@ function RinderbestandApp() {
   const [jahresOpen, setJahresOpen] = useState(false);
   const [kalenderOpen, setKalenderOpen] = useState(false);
   const [samenbankOpen, setSamenbankOpen] = useState(false);
+  const [hauptseiteReihenfolge, setHauptseiteReihenfolge] = useHauptseiteReihenfolge();
+  const [reihenfolgeBearbeiten, setReihenfolgeBearbeiten] = useState(false);
   const [samenbankTab, setSamenbankTab] = useState("deckbullen");
   const [brunstlisteOpen, setBrunstlisteOpen] = useState(false);
   const [mainMenuOpen, setMainMenuOpen] = useState(false);
@@ -8852,43 +8899,138 @@ function RinderbestandApp() {
       <main className="px-5 py-4 pb-28">
         {listView === null && query.trim() === "" && (
           <>
-            <NotesBox />
-            <BirthCalendar
-              compact
-              onOpenFull={() => setKalenderOpen(true)}
-              birthsByDate={birthsByDate}
-              onOpenAnimal={(a) => setPassAnimal(a)}
-              animals={animals}
-              onUpdateAnimal={handleUpdateField}
-            />
-            <div className="flex flex-col gap-2 mb-6">
-              {[
-                { label: "Brunstliste", onClick: () => setBrunstlisteOpen(true) },
-                { label: "Aktueller Rinderbestand", sub: `${animals.filter((a) => CATEGORIES.includes(a.category)).length} Tiere`, onClick: () => setListView("Gesamt") },
-                { label: "Stammbaum", onClick: () => setStammbaumOpen(true) },
-                { label: "Ställe", onClick: () => setStaelleOpen(true) },
-                { label: "Betriebe", onClick: () => setBetriebeOpen(true) },
-                { label: "Abgänge", sub: `${animals.filter((a) => a.category === "Abgänge").length} Stück`, onClick: () => setListView("Abgänge") },
-                { label: "Jahresübersicht", onClick: () => setJahresOpen(true) },
-                { label: "Historie", sub: "Brunsthistorie, Stallbuch, Nachkommen …", onClick: () => setHistorieAuswahlOpen(true) },
-                { label: "Unregistrierte Tiere", sub: `${animals.filter((a) => a.category === "Unregistriert").length} Stück`, onClick: () => setListView("Unregistriert") },
-                { label: "Samenbank", sub: "Deckbullen und Samen", onClick: () => { setSamenbankTab("deckbullen"); setSamenbankOpen(true); } },
-              ].map((item) => (
-                <button
-                  key={item.label}
-                  type="button"
-                  onClick={item.onClick}
-                  className="w-full h-[60px] rounded-xl border px-4 flex items-center justify-between transition"
-                  style={{ backgroundColor: "#FFFFFF", borderColor: "#D9CFB8" }}
-                >
-                  <span className="flex flex-col items-start">
-                    <span className="font-slab text-sm font-bold text-[#2B2A26]">{item.label}</span>
-                    {item.sub && <span className="text-xs text-[#6B6858]">{item.sub}</span>}
-                  </span>
-                  <ChevronRight size={18} style={{ color: "#2B2A26" }} />
-                </button>
-              ))}
-            </div>
+            {(() => {
+              const menue = (label, sub, onClick) => ({ art: "knopf", label, sub, onClick });
+              const abschnitte = {
+                mitteilungen: { art: "box", label: "Mitteilungen", inhalt: <NotesBox /> },
+                kalender: {
+                  art: "box",
+                  label: "Kalender",
+                  inhalt: (
+                    <BirthCalendar
+                      compact
+                      onOpenFull={() => setKalenderOpen(true)}
+                      birthsByDate={birthsByDate}
+                      onOpenAnimal={(a) => setPassAnimal(a)}
+                      animals={animals}
+                      onUpdateAnimal={handleUpdateField}
+                    />
+                  ),
+                },
+                brunstliste: menue("Brunstliste", null, () => setBrunstlisteOpen(true)),
+                bestand: menue("Aktueller Rinderbestand", `${animals.filter((a) => CATEGORIES.includes(a.category)).length} Tiere`, () => setListView("Gesamt")),
+                stammbaum: menue("Stammbaum", null, () => setStammbaumOpen(true)),
+                staelle: menue("Ställe", null, () => setStaelleOpen(true)),
+                betriebe: menue("Betriebe", null, () => setBetriebeOpen(true)),
+                abgaenge: menue("Abgänge", `${animals.filter((a) => a.category === "Abgänge").length} Stück`, () => setListView("Abgänge")),
+                jahresuebersicht: menue("Jahresübersicht", null, () => setJahresOpen(true)),
+                historie: menue("Historie", "Brunsthistorie, Stallbuch, Nachkommen …", () => setHistorieAuswahlOpen(true)),
+                unregistriert: menue("Unregistrierte Tiere", `${animals.filter((a) => a.category === "Unregistriert").length} Stück`, () => setListView("Unregistriert")),
+                samenbank: menue("Samenbank", "Deckbullen und Samen", () => {
+                  setSamenbankTab("deckbullen");
+                  setSamenbankOpen(true);
+                }),
+              };
+              const bearbeiten = reihenfolgeBearbeiten && appMode === "admin";
+              const verschieben = (i, d) => {
+                const next = [...hauptseiteReihenfolge];
+                const j = i + d;
+                if (j < 0 || j >= next.length) return;
+                [next[i], next[j]] = [next[j], next[i]];
+                setHauptseiteReihenfolge(next);
+              };
+              const pfeil = (aktiv) => ({
+                width: 36,
+                height: 26,
+                borderRadius: 8,
+                border: "1px solid #D9CFB8",
+                backgroundColor: "#FFFFFF",
+                color: aktiv ? "#2B2A26" : "#D9CFB8",
+                fontSize: 12,
+                lineHeight: 1,
+              });
+              return (
+                <>
+                  {appMode === "admin" && (
+                    <div className="flex items-center justify-end gap-2 mb-2">
+                      {bearbeiten && (
+                        <button
+                          type="button"
+                          onClick={() => setHauptseiteReihenfolge(HAUPTSEITE_STANDARD)}
+                          className="text-xs font-semibold rounded-lg px-3 py-1.5 transition whitespace-nowrap"
+                          style={{ color: "#2B2A26", backgroundColor: "#FFFFFF", border: "1px solid #D9CFB8" }}
+                        >
+                          Standard
+                        </button>
+                      )}
+                      <button
+                        type="button"
+                        onClick={() => setReihenfolgeBearbeiten((v) => !v)}
+                        className="text-xs font-semibold rounded-lg px-3 py-1.5 transition whitespace-nowrap flex items-center gap-1.5"
+                        style={
+                          bearbeiten
+                            ? { color: "#FFFFFF", backgroundColor: "#2B2A26", border: "1px solid #2B2A26" }
+                            : { color: "#2B2A26", backgroundColor: "#FFFFFF", border: "1px solid #D9CFB8" }
+                        }
+                        aria-label={bearbeiten ? "Reihenfolge fertig" : "Reihenfolge bearbeiten"}
+                      >
+                        {bearbeiten ? "Fertig" : (<><Pencil size={13} /> Bearbeiten</>)}
+                      </button>
+                    </div>
+                  )}
+                  {bearbeiten && (
+                    <p className="text-[11px] text-[#8A8672] mb-2 px-0.5">Mit den Pfeilen die Abschnitte nach oben oder unten schieben.</p>
+                  )}
+                  <div className="flex flex-col gap-2 mb-6">
+                    {hauptseiteReihenfolge.map((key, i) => {
+                      const item = abschnitte[key];
+                      if (!item) return null;
+                      if (bearbeiten) {
+                        return (
+                          <div
+                            key={key}
+                            className="w-full h-[60px] rounded-xl border px-4 flex items-center justify-between gap-3"
+                            style={{ backgroundColor: "#FFFFFF", borderColor: "#D9CFB8" }}
+                          >
+                            <span className="font-slab text-sm font-bold text-[#2B2A26] truncate">{item.label}</span>
+                            <span className="flex items-center gap-1.5 shrink-0">
+                              <button type="button" onClick={() => verschieben(i, -1)} disabled={i === 0} style={pfeil(i > 0)} aria-label={`${item.label} nach oben`}>
+                                ▲
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => verschieben(i, 1)}
+                                disabled={i === hauptseiteReihenfolge.length - 1}
+                                style={pfeil(i < hauptseiteReihenfolge.length - 1)}
+                                aria-label={`${item.label} nach unten`}
+                              >
+                                ▼
+                              </button>
+                            </span>
+                          </div>
+                        );
+                      }
+                      if (item.art === "box") return <div key={key}>{item.inhalt}</div>;
+                      return (
+                        <button
+                          key={key}
+                          type="button"
+                          onClick={item.onClick}
+                          className="w-full h-[60px] rounded-xl border px-4 flex items-center justify-between transition"
+                          style={{ backgroundColor: "#FFFFFF", borderColor: "#D9CFB8" }}
+                        >
+                          <span className="flex flex-col items-start">
+                            <span className="font-slab text-sm font-bold text-[#2B2A26]">{item.label}</span>
+                            {item.sub && <span className="text-xs text-[#6B6858]">{item.sub}</span>}
+                          </span>
+                          <ChevronRight size={18} style={{ color: "#2B2A26" }} />
+                        </button>
+                      );
+                    })}
+                  </div>
+                </>
+              );
+            })()}
           </>
         )}
 
