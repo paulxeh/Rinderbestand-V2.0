@@ -2189,9 +2189,11 @@ function AnimalPass({ animal, allAnimals, onEdit, onClose, onOpenAnimal, onShowA
   const father = findByEarTag(allAnimals, animal.fatherEarTag);
 
   const calves = useMemo(() => {
-    if ((animal.category !== "Mutterkühe" && animal.category !== "Jungrinder") || !animal.earTag) return [];
+    if ((animal.category !== "Mutterkühe" && animal.category !== "Jungrinder" && animal.category !== "Deckbullen") || !animal.earTag) return [];
+    // Deckbullen: Nachkommen über den Vater, Kühe/Jungrinder über die Mutter
+    const istBulle = animal.category === "Deckbullen";
     return allAnimals
-      .filter((a) => sameEarTag(a.motherEarTag, animal.earTag))
+      .filter((a) => sameEarTag(istBulle ? a.fatherEarTag : a.motherEarTag, animal.earTag))
       .sort((a, b) => {
         if (!a.birthDate && !b.birthDate) return 0;
         if (!a.birthDate) return 1;
@@ -2445,7 +2447,7 @@ function AnimalPass({ animal, allAnimals, onEdit, onClose, onOpenAnimal, onShowA
             </>
           )}
 
-          {(animal.category === "Mutterkühe" || animal.category === "Jungrinder") && (
+          {(animal.category === "Mutterkühe" || animal.category === "Jungrinder" || animal.category === "Deckbullen") && (
             <>
               <h3 className="text-xs font-semibold uppercase tracking-wide mb-1 mx-8" style={{ color: headingColor }}>
                 Nachkommen ({calves.length})
@@ -3335,7 +3337,8 @@ function HistorieView({ animal, allAnimals, onBack, onOpenAnimal, initialTab, on
   const descendants = useMemo(
     () =>
       allAnimals
-        .filter((a) => animal.earTag && sameEarTag(a.motherEarTag, animal.earTag))
+        // männliche Tiere: Nachkommen über den Vater, weibliche über die Mutter
+        .filter((a) => animal.earTag && sameEarTag(animal.gender === "männlich" ? a.fatherEarTag : a.motherEarTag, animal.earTag))
         .sort((a, b) => {
           if (!a.birthDate && !b.birthDate) return 0;
           if (!a.birthDate) return 1;
@@ -9562,7 +9565,7 @@ function RinderbestandApp() {
           onOpenAnimal={(a) => setPassAnimal(a)}
           onShowAllDescendants={(a) => {
             setHistorieAnimal(a);
-            setHistorieTab(historieStartTab(a));
+            setHistorieTab("nachkommen");
             setHistorieReturnTo(a);
             setPassAnimal(null);
           }}
